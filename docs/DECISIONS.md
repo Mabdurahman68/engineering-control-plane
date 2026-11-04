@@ -66,3 +66,7 @@ No CLI executable runs, for any purpose, before the guard passes. All CLI execut
 - A launch-data handoff outside the run folder.
 - Helper ownership and path-substitution protection.
 - `kill-all` reaching read-only shadow processes of the same user. It needs a separate shadow user, or no shadow in flight during `kill-all`.
+
+## `schema` on agent-written reports
+
+Reports written by a model (`plan.v1`, `worker_report.v1`, `challenge.v1`, `review_report.v1`, `ruling.v1`, `shadow_report.v1`) may omit `schema`, because the contracts' own worked example does. Code knows which step it asked for. All other objects require it.

@@ -3,6 +3,7 @@
     "includes": [
       "**",
       "!ARCHITECTURE.md",
+      "!docs",
       "!README.md",
       "!!vendor",
       "!!eval/fixtures",
