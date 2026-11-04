@@ -121,7 +121,8 @@ export class RealGit implements GitPort {
     return { commit, tree };
   }
   async resetWorktree(path: string, commit: string) {
-    await git(['reset', '-q', '--hard', commit], { cwd: path });
+    // Content moves to the commit; HEAD stays where it was, so H-NOCOMMIT keeps its one baseline.
+    await git(['read-tree', '--reset', '-u', commit], { cwd: path });
     await git(['clean', '-qfd'], { cwd: path });
   }
   async salvage(path: string, commit: string) {

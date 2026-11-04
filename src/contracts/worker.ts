@@ -12,6 +12,18 @@ export const dispatchRequest = z.strictObject({
   timeout_s: z.number().positive(),
   session_id: z.string().nullable(),
   env_allowlist: z.array(z.string()),
+  // Who this call is for. A relay ignores it; the mock uses it to find its script step.
+  meta: z
+    .strictObject({
+      task_id: z.string().nullable(),
+      step: z.string(),
+      n: z.number().int(),
+      rung: z.string(),
+      allowed_paths: z.array(z.string()),
+      scope: z.strictObject({ acs: z.array(z.string()), files: z.array(z.string()) }),
+      point: z.string().optional(),
+    })
+    .optional(),
 });
 export type DispatchRequest = z.infer<typeof dispatchRequest>;
 

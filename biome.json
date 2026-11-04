@@ -23,7 +23,8 @@
       "suspicious": {
         "noExplicitAny": "off",
         "noControlCharactersInRegex": "off",
-        "noAssignInExpressions": "off"
+        "noAssignInExpressions": "off",
+        "useIterableCallbackReturn": "off"
       },
       "style": { "noNonNullAssertion": "off", "useConst": "error", "noParameterAssign": "off" },
       "complexity": { "noForEach": "off", "useLiteralKeys": "off", "noStaticOnlyClass": "off" },

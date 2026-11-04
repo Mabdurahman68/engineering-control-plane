@@ -91,6 +91,15 @@ export type TaskRec = {
   needs_reset: boolean;
   quarantined_rungs: string[];
   discarded_evidence: number;
+  // A scheduled retry on one rung: don't dispatch until this time.
+  hold: { rung: string; not_before: number; step: string } | null;
+  skip_rungs: string[];
+  stale_review_tree: string | null;
+  gate_only_rerun: boolean;
+  keep_diff: boolean;
+  forced_stall: string | null;
+  worktree_gen: number;
+  note: string | null;
 };
 
 export type GateRun = {
@@ -143,7 +152,13 @@ export type RunR = {
   };
   integrated_repairs: number;
   next_tint: number;
-  verify: { generation: number; passed_stages: string[]; tree: string | null };
+  verify: {
+    generation: number;
+    passed_stages: string[];
+    tree: string | null;
+    gate_results: any[];
+    ac_evidence: Record<string, string>;
+  };
   mock_review_seen: boolean;
   authors_integrated: string[];
   waivers: WaiverRec[];
@@ -188,6 +203,17 @@ export type RunR = {
   last_heartbeat_at: string | null;
   extended_budget: number;
   policy_accepts: string[];
+  run_hold: { rung: string; not_before: number; step: string } | null;
+  run_skip_rungs: string[];
+  run_step_retries: Record<string, number>;
+  plan_reasks: number;
+  plan_rung_changes: number;
+  verify_review: { slot: number; verdicts: { slot: number; verdict: string; review_id: string }[] };
+  plan_candidate: Plan | null;
+  planner_family: string | null;
+  baseline_signature: string | null;
+  plan_review_findings: unknown[];
+  conflict_attempts: number;
 };
 
 export function initialRun(): RunR {
@@ -210,7 +236,7 @@ export function initialRun(): RunR {
     integration: { branch: null, worktree: null, tip: null, merged: [] },
     integrated_repairs: 0,
     next_tint: 1,
-    verify: { generation: 0, passed_stages: [], tree: null },
+    verify: { generation: 0, passed_stages: [], tree: null, gate_results: [], ac_evidence: {} },
     mock_review_seen: false,
     authors_integrated: [],
     waivers: [],
@@ -249,6 +275,17 @@ export function initialRun(): RunR {
     last_heartbeat_at: null,
     extended_budget: 0,
     policy_accepts: [],
+    run_hold: null,
+    run_skip_rungs: [],
+    run_step_retries: {},
+    plan_reasks: 0,
+    plan_rung_changes: 0,
+    verify_review: { slot: 0, verdicts: [] },
+    plan_candidate: null,
+    planner_family: null,
+    baseline_signature: null,
+    plan_review_findings: [],
+    conflict_attempts: 0,
   };
 }
 
@@ -288,6 +325,14 @@ export function newTask(taskId: string, spec: TaskRec['spec'], isIntegration: bo
     needs_reset: false,
     quarantined_rungs: [],
     discarded_evidence: 0,
+    hold: null,
+    skip_rungs: [],
+    stale_review_tree: null,
+    gate_only_rerun: false,
+    keep_diff: false,
+    forced_stall: null,
+    worktree_gen: 0,
+    note: null,
   };
 }
 
@@ -321,7 +366,14 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.resume_to !== undefined) s.resume_to = d.resume_to;
       else if (d.trigger === 'resume') s.resume_to = null;
       if (d.to === 'VERIFYING') {
-        s.verify = { generation: s.verify.generation + 1, passed_stages: [], tree: null };
+        s.verify = {
+          generation: s.verify.generation + 1,
+          passed_stages: [],
+          tree: null,
+          gate_results: [],
+          ac_evidence: {},
+        };
+        s.verify_review = { slot: 0, verdicts: [] };
       }
       if (d.trigger === 'cancel' || d.trigger === 'operator_pause') s.pending_request = null;
       return;
@@ -335,12 +387,17 @@ function apply(s: RunR, ev: LedgerEvent): void {
         t.state = d.to;
         t.next_step = d.next_step ?? 'work';
         t.conflict_of = d.conflict_of ?? null;
+        t.note = d.note ?? null;
         t.base_commit = d.base_commit ?? null;
+        t.open_findings = d.open_findings ?? [];
+        t.gate_runs = d.gate_runs ?? [];
         s.tasks[t.task_id] = t;
         s.task_order.push(t.task_id);
-        if (d.is_integration && d.counted !== false) {
+        if (d.is_integration) {
           s.next_tint += 1;
-          s.integrated_repairs += d.charge === false ? 0 : 1;
+          if (d.charge === false) s.conflict_attempts += 1;
+          else s.integrated_repairs += 1;
+          if (d.snapshot0) t.snapshots.push(d.snapshot0);
         }
         return;
       }
@@ -356,7 +413,12 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.escalation_reason !== undefined) t.escalation_reason = d.escalation_reason;
       if (d.to === 'TASK_WAITING_WORKER') t.waiting_since = ev.seq;
       if (d.commit !== undefined) t.commit = d.commit;
+      if (d.rung !== undefined) t.rung = d.rung;
+      if (d.forced_stall !== undefined) t.forced_stall = d.forced_stall;
+      if (d.note !== undefined) t.note = d.note;
       if (d.reset) {
+        t.skip_rungs = [];
+        t.hold = null;
         t.attempts = 0;
         t.repairs = 0;
         t.repair_rung_switches = 0;
@@ -396,10 +458,15 @@ function apply(s: RunR, ev: LedgerEvent): void {
     case 'plan.rejected':
       s.plan_rejected += 1;
       if (d.kind === 'review_failed') s.plan_reviews_failed += 1;
+      if (d.kind === 'invalid') s.plan_reasks += 1;
+      if (d.rung_change) s.plan_rung_changes += 1;
+      s.plan_candidate = null;
+      if (d.findings) s.plan_review_findings = d.findings;
       return;
     case 'worktree.created': {
       const t = task(s, ev.task_id);
       t.worktree = d.path;
+      t.worktree_gen += 1;
       t.base_commit = d.base_commit;
       t.branch = d.branch ?? t.branch;
       t.needs_reset = false;
@@ -440,15 +507,13 @@ function apply(s: RunR, ev: LedgerEvent): void {
       };
       s.attempts[rec.attempt_id] = rec;
       s.counters.invocations += 1;
+      if (!ev.task_id) s.run_hold = null;
       if (ev.task_id && s.tasks[ev.task_id] && ev.type === 'dispatch.intent') {
         const t = s.tasks[ev.task_id];
         t.attempts += 1;
         t.rung = d.rung;
         if (!t.tried_rungs.includes(d.rung)) t.tried_rungs.push(d.rung);
-        if (d.step === 'repair' && d.charge_repair) {
-          t.repairs += 1;
-          s.counters.repairs += 1;
-        }
+        t.keep_diff = false;
       }
       return;
     }
@@ -475,6 +540,10 @@ function apply(s: RunR, ev: LedgerEvent): void {
     case 'dispatch.classified': {
       const a = s.attempts[d.attempt_id];
       if (a) a.class = d.class;
+      if (d.plan) {
+        s.plan_candidate = d.plan;
+        s.planner_family = a?.family ?? null;
+      }
       return;
     }
     case 'attempt.result_fenced': {
@@ -500,10 +569,14 @@ function apply(s: RunR, ev: LedgerEvent): void {
         disputes: d.disputes ?? [],
       });
       if (d.family && !t.retained_families.includes(d.family)) t.retained_families.push(d.family);
+      t.skip_rungs = t.skip_rungs.filter((k) => !k.startsWith('work:') && !k.startsWith('repair:'));
       if (d.attempt_id && s.attempts[d.attempt_id]) s.attempts[d.attempt_id].retained = true;
       return;
     }
     case 'gate.finished': {
+      if (d.baseline) s.baseline_signature = d.signature ?? null;
+      if (d.integrated) s.verify.gate_results = d.results;
+      if (d.ac_id) s.verify.ac_evidence[d.ac_id] = d.status;
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;
       if (t) {
         t.gate_runs.push({ tree: d.tree, attempt_n: d.attempt_n, results: d.results });
@@ -528,6 +601,12 @@ function apply(s: RunR, ev: LedgerEvent): void {
     }
     case 'review.collected': {
       if (d.mock) s.mock_review_seen = true;
+      if (d.stage)
+        s.verify_review.verdicts.push({
+          slot: d.slot ?? 0,
+          verdict: d.verdict,
+          review_id: d.review_id,
+        });
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;
       if (t) {
         t.reviews.push({
@@ -542,6 +621,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
           stall_keys: d.stall_keys ?? [],
           mock: Boolean(d.mock),
         });
+        if (d.tree !== t.stale_review_tree) t.stale_review_tree = d.tree;
         t.reviewer_rung = d.rung;
         t.open_findings = d.findings ?? [];
         const last = t.stall_history[t.stall_history.length - 1];
@@ -558,21 +638,39 @@ function apply(s: RunR, ev: LedgerEvent): void {
     case 'repair.requested': {
       const t = task(s, ev.task_id);
       if (d.switch_rung) t.repair_rung_switches += 1;
+      t.repairs += 1;
+      s.counters.repairs += 1;
+      return;
+    }
+    case 'worktree.salvaged': {
+      const t = task(s, ev.task_id);
+      if (d.new_dir) t.worktree = null;
       return;
     }
     case 'stall.detected': {
       const t = task(s, ev.task_id);
       t.stalls += 1;
+      t.forced_stall = null;
       return;
     }
     case 'fallback.taken': {
       s.counters.fallbacks += 1;
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;
       if (t) {
-        const key = d.from as string;
+        const key = (d.key ?? d.from) as string;
         t.rung_retries[key] = (t.rung_retries[key] ?? 0) + 1;
         if (d.class === 'TIMEOUT') t.timeouts += 1;
         if (d.next_rung) t.rung = d.to;
+        t.hold = d.not_before ? { rung: d.to, not_before: d.not_before, step: d.step ?? '' } : null;
+        if (d.skip && !t.skip_rungs.includes(d.skip)) t.skip_rungs.push(d.skip);
+        if (d.keep_diff) t.keep_diff = true;
+      } else {
+        const key = (d.key ?? d.from) as string;
+        s.run_step_retries[key] = (s.run_step_retries[key] ?? 0) + 1;
+        s.run_hold = d.not_before
+          ? { rung: d.to, not_before: d.not_before, step: d.step ?? '' }
+          : null;
+        if (d.skip && !s.run_skip_rungs.includes(d.skip)) s.run_skip_rungs.push(d.skip);
       }
       return;
     }
@@ -660,6 +758,8 @@ function apply(s: RunR, ev: LedgerEvent): void {
         s.policy_accepts.push(d.accept_policy);
       }
       if (d.extend_budget) s.extended_budget += d.extend_budget;
+      s.run_skip_rungs = [];
+      for (const t of Object.values(s.tasks)) t.skip_rungs = [];
       return;
     case 'heartbeat':
       s.last_heartbeat_at = ev.at;
