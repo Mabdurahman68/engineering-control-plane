@@ -1,0 +1,30 @@
+{
+  "files": {
+    "includes": [
+      "**",
+      "!ARCHITECTURE.md",
+      "!README.md",
+      "!!vendor",
+      "!!eval/fixtures",
+      "!!test/fake-cli/bin",
+      "!pnpm-lock.yaml"
+    ]
+  },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noControlCharactersInRegex": "off",
+        "noAssignInExpressions": "off"
+      },
+      "style": { "noNonNullAssertion": "off", "useConst": "error", "noParameterAssign": "off" },
+      "complexity": { "noForEach": "off", "useLiteralKeys": "off", "noStaticOnlyClass": "off" },
+      "correctness": { "noUnusedVariables": "error", "noUnusedImports": "error" }
+    }
+  }
+}
