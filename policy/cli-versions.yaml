@@ -1,0 +1,5 @@
+schema: cli_versions.v1
+adapters:
+  codex-relay: { min: 0.166.0, max: 0.166.0, required_flags: ['--json', '--sandbox', '--model'], help_args: ['exec', '--help'] }
+  claude-relay: { min: 2.1.309, max: 2.1.309, required_flags: ['--model', '--permission-mode'], help_args: ['--help'] }
+  opencode-relay: { min: 1.18.23, max: 1.18.23, required_flags: ['--model', '--agent'], help_args: ['run', '--help'] }

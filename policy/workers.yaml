@@ -1,0 +1,18 @@
+schema: workers.v1
+rungs:
+  codex-sol: { adapter: codex-relay, model: gpt-6.1-sol, effort: high, auth_mode: subscription, credential_env: [] }
+  codex-astra: { adapter: codex-relay, model: gpt-6-astra, effort: high, auth_mode: subscription, credential_env: [] }
+  claude-opus: { adapter: claude-relay, model: claude-opus-5-5, effort: high, auth_mode: subscription, credential_env: [] }
+  claude-sonnet: { adapter: claude-relay, model: claude-sonnet-5-5, effort: high, auth_mode: subscription, credential_env: [] }
+  opencode-glm: { adapter: opencode-relay, model: opencode-go/glm-5.3, variant: high, auth_mode: subscription, credential_env: [] }
+ladders:
+  planning: [claude-opus, codex-astra, opencode-glm]
+  research: [opencode-glm, codex-sol, claude-opus]
+  implementation: [codex-sol, opencode-glm, claude-sonnet]
+  hard-code: [claude-opus, codex-astra, codex-sol]
+  tests: [claude-opus, codex-astra, opencode-glm]
+  review: [claude-opus, codex-astra, opencode-glm]
+  adversarial: [claude-opus, codex-astra, opencode-glm]
+  adjudication: [claude-opus, codex-astra, opencode-glm]
+  integration-repair: [codex-astra, claude-opus, opencode-glm]
+  shadow: [codex-sol, claude-sonnet, opencode-glm]

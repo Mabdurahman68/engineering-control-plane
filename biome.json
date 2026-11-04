@@ -4,6 +4,8 @@
       "**",
       "!ARCHITECTURE.md",
       "!docs",
+      "!policy",
+      "!.github",
       "!README.md",
       "!!vendor",
       "!!eval/fixtures",

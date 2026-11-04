@@ -1,0 +1,7 @@
+schema: families.v1
+models:
+  gpt-6.1-sol: openai
+  gpt-6-astra: openai
+  claude-opus-5-5: anthropic
+  claude-sonnet-5-5: anthropic
+  opencode-go/glm-5.3: glm

@@ -1,0 +1,8 @@
+schema: risk_depth_profile.v1
+profiles:
+  QUICK: { max_tasks: 2, plan_review: false, parallel_writers: 1, repair_max: 2, integrated_repair_max: 1, worker_timeout_s: 1200, task_tests: required, integrated_full_runs: 1, review_input: diff, adversarial: none, targeted_checks: false, claim_ledger: required_only }
+  STANDARD: { max_tasks: 4, plan_review: false, parallel_writers: 2, repair_max: 3, integrated_repair_max: 2, worker_timeout_s: 2700, task_tests: required, integrated_full_runs: 1, review_input: spec_excerpt, adversarial: none, targeted_checks: true, claim_ledger: all }
+  DEEP: { max_tasks: 4, plan_review: true, parallel_writers: 4, repair_max: 4, integrated_repair_max: 2, worker_timeout_s: 3600, task_tests: required_and_full, integrated_full_runs: 1, review_input: full_spec_repo, adversarial: one, targeted_checks: true, claim_ledger: all_and_figures }
+  EXHAUSTIVE: { max_tasks: 4, plan_review: true, parallel_writers: 4, repair_max: 4, integrated_repair_max: 2, worker_timeout_s: 5400, task_tests: required_and_full, integrated_full_runs: 2, review_input: full_spec_repo, adversarial: three_lenses, targeted_checks: true, claim_ledger: all_and_figures }
+min_depth_for_risk: { low: QUICK, medium: STANDARD, high: DEEP, critical: EXHAUSTIVE }
+quorum: { low: 1, medium: 1, high: 1, critical: 2 }

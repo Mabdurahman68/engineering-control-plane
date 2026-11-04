@@ -1,0 +1,7 @@
+schema: settings.v1
+caps:
+  run: { invocations: 40, wall_clock_s: 28800, usd: 30, shadow_invocations: 80, tokens: null }
+  day: { invocations: 120, wall_clock_s: 57600, usd: 75, shadow_invocations: 240, tokens: null }
+notify: { command: null }
+allow_untested_cli: false
+timeouts: { probe_s: 10, shadow_s: 600, shadow_end_wait_s: 300, drain_s: 1800 }
