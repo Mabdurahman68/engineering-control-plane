@@ -17,6 +17,7 @@ import {
   openWriters,
   resetPoint,
 } from './selectors.ts';
+import { sweepAttempt } from './recovery.ts';
 import {
   awaitReadStep,
   collectReview,
@@ -156,7 +157,12 @@ async function prepareForDispatch(e: Engine, t: TaskRec) {
 async function stepDispatching(e: Engine, t: TaskRec): Promise<boolean> {
   const open = currentAttempt(e.s, t.task_id, ['work', 'repair']);
   if (open) {
-    if (open.started && !open.finished) {
+    if (open.finished) {
+      // Recovery found the relay lost during the spawn window.
+      e.taskTo(t, 'COLLECTING', 'spawn_failed');
+      return true;
+    }
+    if (open.started) {
       e.taskTo(t, 'WORKING', 'started');
       return true;
     }
@@ -183,6 +189,7 @@ async function stepDispatching(e: Engine, t: TaskRec): Promise<boolean> {
 }
 
 async function dispatchWorker(e: Engine, t: TaskRec, rung: string): Promise<boolean> {
+  if (e.capBlocks()) return false;
   await prepareForDispatch(e, t);
   const fresh = e.s.tasks[t.task_id];
   // Between the prepare's await and here, another task may have reserved a family.
@@ -266,12 +273,20 @@ function latestWorkAttempt(e: Engine, t: TaskRec): AttemptRec | null {
 async function stepCollecting(e: Engine, t: TaskRec): Promise<boolean> {
   const a = latestWorkAttempt(e, t);
   if (!a) {
-    // No attempt to collect: a retry was recorded, or a crash fell before the intent.
+    // Classified, and the crash fell before the transition. A retained result goes on to its gates.
+    const last = Object.values(e.s.attempts)
+      .filter((x) => x.task_id === t.task_id && x.mode === 'write')
+      .pop();
+    if (last?.class === 'OK' && last.retained) {
+      e.taskTo(t, 'GATING', 'report_valid', { next_step: 'gate' });
+      return true;
+    }
     e.taskTo(t, 'DISPATCHING', 'failure_rung_available');
     return true;
   }
   const raw = e.loadRaw(a);
   if (!raw) throw new InvariantViolation(`attempt ${a.attempt_id} has no outcome`);
+  await sweepAttempt(e, a);
   let cls: FailureClass = raw.spawn_failed ? 'UNKNOWN' : e.classifyRaw(a, raw);
   let report: WorkerReport | null = null;
   if (cls === 'OK') {
@@ -290,6 +305,17 @@ async function recordSnapshot(
   report: WorkerReport,
   raw: any,
 ): Promise<boolean> {
+  // The finished, unclassified attempt is the durable intent. A crash here redoes this idempotently,
+  // on the untouched tree, because no attempt can start until this one is classified.
+  if (a.retained) {
+    e.append('dispatch.classified', t.task_id, {
+      attempt_id: a.attempt_id,
+      class: 'OK',
+      rejected_disputes: 0,
+    });
+    e.taskTo(t, 'GATING', 'report_valid', { next_step: 'gate' });
+    return true;
+  }
   const n = t.snapshots.length + 1;
   const ref = `refs/ecp/${e.o.runId}/${t.task_id}/${n}`;
   const parent = resetPoint(t);
@@ -308,11 +334,6 @@ async function recordSnapshot(
       a.step === 'repair' && own.has(d.fingerprint) && !t.adjudicated.includes(d.fingerprint);
     return okEvidence && allowed;
   });
-  e.append('dispatch.classified', t.task_id, {
-    attempt_id: a.attempt_id,
-    class: 'OK',
-    rejected_disputes: report.disputed_findings.length - disputes.length,
-  });
   e.append('snapshot.recorded', t.task_id, {
     n,
     ref,
@@ -327,6 +348,11 @@ async function recordSnapshot(
     known_issues: report.known_issues,
     status: report.status,
     usage_session: raw.session_id ?? null,
+  });
+  e.append('dispatch.classified', t.task_id, {
+    attempt_id: a.attempt_id,
+    class: 'OK',
+    rejected_disputes: report.disputed_findings.length - disputes.length,
   });
   e.taskTo(t, 'GATING', 'report_valid', { next_step: 'gate' });
   return true;
@@ -504,7 +530,7 @@ async function stepGating(e: Engine, t: TaskRec): Promise<boolean> {
         ? {
             worktree: t.worktree,
             expectedHead: base,
-            configBaseline: (e.configBaseline ?? e.p.store.read('config-baseline')) as string,
+            configBaseline: e.s.config_baseline as string,
             artifactTexts,
           }
         : undefined,
@@ -524,8 +550,7 @@ async function stepGating(e: Engine, t: TaskRec): Promise<boolean> {
       });
       for (const c of rec.claims) e.append('claim.recorded', t.task_id, { claim: c });
       e.append('claim.reconciled', t.task_id, { ok: rec.ok, detail: rec.detail, attempt: snap.n });
-      if (t.is_integration || true)
-        store.write(`claims/${t.task_id}-${snap.n}.json`, JSON.stringify(rec.claims, null, 2));
+      store.write(`claims/${t.task_id}-${snap.n}.json`, JSON.stringify(rec.claims, null, 2));
       return { ok: rec.ok, detail: rec.detail };
     },
   });
@@ -745,6 +770,7 @@ async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
     }
     await e.refreshHealth(Object.keys(e.p.policy.workers.rungs));
     if (holdFor(e, t, 'challenge')?.waiting) return false;
+    if (e.capBlocks()) return false;
     const rung = filerRung(e, t);
     if (!rung) {
       e.taskTo(t, 'TASK_WAITING_WORKER', 'no_compliant_rung', { next_step: 'challenge' });
@@ -872,7 +898,7 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
       specSha: reviewSpecSha(e),
     });
     if (!reviewed) return true;
-    const refs = { fingerprints: reviewed.findings.map((f) => f.fingerprint) };
+    const refs = { fingerprints: reviewed.findings.map((f: any) => f.fingerprint) };
     const after = e.s.tasks[t.task_id];
     const sameTree = after.reviews.filter((r) => r.tree === snap.tree);
     const verdicts = new Set(sameTree.slice(-e.quorum()).map((r) => r.effective));
@@ -939,8 +965,29 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
     );
     return true;
   }
+  // A FAIL that was recorded, but the crash fell before it was routed.
+  const lastReview = t.reviews[t.reviews.length - 1];
+  if (
+    lastReview &&
+    lastReview.tree === snap.tree &&
+    lastReview.effective === 'FAIL' &&
+    !lastReview.routed
+  ) {
+    e.decide(
+      'DP-REVIEW',
+      t,
+      'repair',
+      t.task_id,
+      'REVIEWING',
+      'REPAIR_PENDING',
+      { fingerprints: lastReview.fingerprints },
+      snap.tree,
+    );
+    e.taskTo(t, 'REPAIR_PENDING', 'review_failed', { next_step: 'repair' });
+    return true;
+  }
   if (filledSlots(t, snap.tree).length >= e.quorum()) return completeTask(e, t);
-  if (e.draining) return false;
+  if (e.capBlocks()) return false;
   await e.refreshHealth(e.p.policy.workers.ladders.review);
   const hold = holdFor(e, t, 'review');
   if (hold?.waiting) return false;
@@ -1041,8 +1088,8 @@ async function completeTask(e: Engine, t: TaskRec): Promise<boolean> {
 }
 
 export function applyDiffRisk(e: Engine, t: TaskRec, _commit: string) {
-  const run = [...t.gate_runs].reverse().find((g: any) => g.changed);
-  const paths = ((run as any)?.changed ?? []).map((f: any) => f.path);
+  const run = [...t.gate_runs].reverse().find((g) => g.changed);
+  const paths = (run?.changed ?? []).map((f) => f.path);
   const risk = ruleRisk(e.p.policy.riskRules, paths);
   if (e.raiseRisk(risk, `diff of ${t.task_id}`)) reopenPassed(e);
 }
@@ -1265,6 +1312,7 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
     await e.refreshHealth(ladder);
     const hold = holdFor(e, t, 'adjudicate');
     if (hold?.waiting) return false;
+    if (e.capBlocks()) return false;
     const rung = hold ? hold.rung : e.pickReader(ladder, excluded, skipListFor(e, t, 'adjudicate'));
     if (!rung) {
       e.taskTo(t, 'TASK_WAITING_WORKER', 'no_compliant_rung', { next_step: 'adjudicate' });
@@ -1380,7 +1428,14 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
     const snap = lastSnapshot(fresh);
     const reviewId =
       d.subject.review_id ?? fresh.reviews[fresh.reviews.length - 1]?.review_id ?? null;
-    e.addFindingWaivers(e.s.tasks[t.task_id], reviewId, d.id, snap?.tree ?? '0'.repeat(40));
+    const disputed = (d.keys as string[]).filter((k) => !k.startsWith('split:'));
+    e.addFindingWaivers(
+      e.s.tasks[t.task_id],
+      reviewId,
+      d.id,
+      snap?.tree ?? '0'.repeat(40),
+      disputed.length ? disputed : null,
+    );
   } else {
     // A ruling that doesn't fit its subject, such as OVERRIDE on a gate, doesn't count as a waiver.
     e.append('disagreement.adjudicated', t.task_id, {

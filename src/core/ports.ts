@@ -2,6 +2,10 @@ import type { DecisionObserver, PolicyBundle, Spec, WorkerAdapter } from '../con
 import type { LedgerStore } from '../ledger/ledger.ts';
 import type { CommandRunner, GitPort, RunStore } from '../worktree/port.ts';
 
+// Thrown by a test failpoint to model a killed process: it passes through the engine untouched,
+// so nothing runs that a real kill would have prevented. Production failpoints send SIGKILL.
+export class SimulatedKill extends Error {}
+
 export interface Clock {
   now(): number;
   // Waits until notified, or the given time. On a virtual clock, this advances time.

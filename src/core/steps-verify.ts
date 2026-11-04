@@ -1,4 +1,4 @@
-import { checkAc, checkEvidence, checkReview, checkTreeId } from '../gates/checks.ts';
+import { checkAc, checkEvidence, checkLedger, checkReview, checkTreeId } from '../gates/checks.ts';
 import { runGates } from '../gates/gates.ts';
 import { sha256 } from '../ledger/canonical.ts';
 import { loadLedger } from '../ledger/ledger.ts';
@@ -6,6 +6,7 @@ import { ruleRisk } from '../policy/risk.ts';
 import { reportHasOnlyUnverifiableFailures } from '../review/effective.ts';
 import { assemble, specExcerpt } from './briefs.ts';
 import type { Engine } from './engine.ts';
+import { InvariantViolation } from './reducer.ts';
 import { currentAttempt } from './selectors.ts';
 import { openIntegrationTask, tipOf, unionPaths } from './steps-integrate.ts';
 import {
@@ -203,7 +204,27 @@ async function stageAcCommands(e: Engine): Promise<boolean> {
         });
     }
   }
+  // A command that changed the tree voids its evidence, as for any gate.
+  const after = await git.worktreeTree(checkout);
   await git.removeWorktree(checkout);
+  if (after !== tree) {
+    e.append('evidence.discarded_stale', null, { tree, stage: 'ac_commands' });
+    const signature = sha256(`H-TREE-ID:ac:${after}`);
+    const identity = {
+      id: 'H-TREE-ID',
+      status: 'FAIL',
+      soft: false,
+      detail: 'an acceptance command changed the tree',
+      signature,
+      uncovered: [],
+    };
+    return repairOrExhaust(
+      e,
+      'REPAIR_PENDING',
+      { gate_runs: [{ tree, attempt_n: e.s.verify.generation, results: [identity] }] },
+      { signatures: [signature] },
+    );
+  }
   if (failures.length) {
     return repairOrExhaust(
       e,
@@ -252,7 +273,7 @@ async function stageReview(e: Engine, stage: string): Promise<boolean> {
       specSha: reviewSpecSha(e),
     });
     if (!reviewed) return true;
-    const refs = { fingerprints: reviewed.findings.map((f) => f.fingerprint) };
+    const refs = { fingerprints: reviewed.findings.map((f: any) => f.fingerprint) };
     if (reviewed.effective === 'FAIL') {
       if (reportHasOnlyUnverifiableFailures(reviewed.report, e.coveredAcs())) {
         const ac = reviewed.report.criteria.find(
@@ -289,13 +310,7 @@ async function stageReview(e: Engine, stage: string): Promise<boolean> {
       }
       return repairOrExhaust(e, 'REPAIR_PENDING', { findings: reviewed.findings }, refs);
     }
-    if (stage === 'acceptance') {
-      const ev = e.p.store.read('acceptance.json');
-      const passed: string[] = ev ? JSON.parse(ev) : [];
-      for (const c of reviewed.report.criteria)
-        if (c.verdict === 'PASS' && !passed.includes(c.ac)) passed.push(c.ac);
-      e.p.store.write('acceptance.json', JSON.stringify(passed));
-    }
+
     const done = e.s.verify_review.verdicts.filter(
       (v) => v.slot >= 0 && stage === 'acceptance',
     ).length;
@@ -304,7 +319,7 @@ async function stageReview(e: Engine, stage: string): Promise<boolean> {
     }
     return true;
   }
-  if (e.draining) return false;
+  if (e.capBlocks()) return false;
   const ladder =
     stage === 'acceptance'
       ? e.p.policy.workers.ladders.review
@@ -390,8 +405,9 @@ async function finishVerify(e: Engine): Promise<boolean> {
       return text !== null && sha256(text) === r.log_sha;
     },
   );
-  loadLedger(e.p.ledgerStore);
-  const accepted: string[] = JSON.parse(e.p.store.read('acceptance.json') ?? '[]');
+  const chain = checkLedger(() => loadLedger(e.p.ledgerStore));
+  if (!chain.ok) throw new InvariantViolation(`H-LEDGER: ${chain.detail}`);
+  const accepted = e.s.verify.accepted;
   const ac = checkAc(
     e.spec.acceptance_criteria.map((c) => {
       const commands = c.verify.filter((v) => v.kind === 'command');

@@ -16,6 +16,8 @@ export function authorsOfTask(s: RunR, taskId: string, seen = new Set<string>())
   seen.add(taskId);
   const out = new Set<string>(t.retained_families);
   for (const dep of t.spec.depends_on) for (const f of authorsOfTask(s, dep, seen)) out.add(f);
+  // A conflict resolution contains both parents' work, and the incoming one isn't merged yet.
+  if (t.conflict_of) for (const f of authorsOfTask(s, t.conflict_of, seen)) out.add(f);
   if (t.is_integration) for (const f of s.authors_integrated) out.add(f);
   return [...out];
 }

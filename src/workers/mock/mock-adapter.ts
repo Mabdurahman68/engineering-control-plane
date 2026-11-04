@@ -379,7 +379,9 @@ export class MockAdapter implements WorkerAdapter {
         const brief = this.briefBlock(req, 'repair_brief');
         const all: any[] = brief?.findings ?? [];
         const disputed_findings = all
-          .filter((f) => !args?.fingerprint || f.fingerprint === args.fingerprint)
+          .filter((f, i) =>
+            args?.only_first ? i === 0 : !args?.fingerprint || f.fingerprint === args.fingerprint,
+          )
           .map((f) => ({
             fingerprint: args?.spoof ?? f.fingerprint,
             reason: 'this is wrong',

@@ -188,6 +188,15 @@ export function checkAc(criteria: AcFacts[], humanVerified: string[]): CheckResu
   return out.length ? bad(`no evidence for ${out.join(', ')}`, out) : ok();
 }
 
+export function checkLedger(load: () => unknown): CheckResult {
+  try {
+    load();
+    return ok();
+  } catch (err) {
+    return bad(`ledger: ${(err as Error).message}`);
+  }
+}
+
 export function checkCap(used: number, cap: number): CheckResult {
   return used < cap ? ok() : bad(`${used} of ${cap} used`);
 }

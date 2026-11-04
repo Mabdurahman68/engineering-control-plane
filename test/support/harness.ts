@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Engine, type RunExit } from '../../src/core/engine.ts';
+import { canonical, sha256 } from '../../src/ledger/canonical.ts';
 import type { EnginePorts, ProcKiller, ProcScanner } from '../../src/core/ports.ts';
 import type {
   DecisionObserver,
@@ -267,7 +268,7 @@ export function makeSim(
     },
   });
   sim.engine = new Engine(
-    { runId: 'run1', spec, specSha: 'a'.repeat(64), policySha: 'b'.repeat(64) },
+    { runId: 'run1', spec, specSha: sha256(canonical(spec)), policySha: 'b'.repeat(64) },
     sim.ports,
   );
   return sim as Sim;
@@ -284,7 +285,12 @@ export async function resumeSim(
   opts: { decision?: Record<string, unknown>; extendBudget?: number; acceptPolicy?: boolean } = {},
 ): Promise<RunExit> {
   sim.engine = new Engine(
-    { runId: 'run1', spec: sim.spec, specSha: 'a'.repeat(64), policySha: 'b'.repeat(64) },
+    {
+      runId: 'run1',
+      spec: sim.spec,
+      specSha: sha256(canonical(sim.spec)),
+      policySha: 'b'.repeat(64),
+    },
     sim.ports,
   );
   sim.engine.loadForResume();
@@ -377,7 +383,7 @@ export function makeReal(
     policy,
     spec,
     control: null,
-    specSha: 'a'.repeat(64),
+    specSha: sha256(canonical(spec)),
   };
   sim.ports = makePorts({
     git,

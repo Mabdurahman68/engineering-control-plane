@@ -28,6 +28,7 @@ export function openIntegrationTask(
     note?: string;
     snapshot0?: Record<string, unknown>;
     next_step?: string;
+    from_retry?: boolean;
   } = {},
 ): TaskRec {
   const id = `T-INT-${e.s.next_tint}`;
@@ -55,6 +56,7 @@ export function openIntegrationTask(
     charge: o.charge,
     note: o.note ?? null,
     snapshot0: o.snapshot0,
+    from_retry: o.from_retry,
     next_step:
       o.next_step ??
       (entry === 'REPAIR_PENDING'
@@ -145,10 +147,12 @@ async function mergeNext(e: Engine, id: string): Promise<boolean> {
 }
 
 export async function stepIntegrating(e: Engine): Promise<boolean> {
-  if (e.pendingRetryIntegration !== null) {
-    const note = e.pendingRetryIntegration;
-    e.pendingRetryIntegration = null;
-    openIntegrationTask(e, 'READY', { note, charge: false });
+  if (e.s.pending_retry_integration !== null) {
+    openIntegrationTask(e, 'READY', {
+      note: e.s.pending_retry_integration,
+      charge: false,
+      from_retry: true,
+    });
     return true;
   }
   if (await stepTasks(e)) return true;

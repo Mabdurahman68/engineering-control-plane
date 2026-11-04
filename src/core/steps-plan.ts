@@ -2,7 +2,7 @@ import { planSchema } from '../contracts/index.ts';
 import { CONTROL_DEFAULTS, checkNoPush, checkRepo } from '../gates/checks.ts';
 import { matchesAny } from '../gates/glob.ts';
 import { gateSignature } from '../gates/signature.ts';
-import { sha256 } from '../ledger/canonical.ts';
+
 import { parseBlock } from '../review/report-block.ts';
 import { assemble, specExcerpt } from './briefs.ts';
 import type { Engine } from './engine.ts';
@@ -45,13 +45,8 @@ export async function stepPreflight(e: Engine): Promise<boolean> {
     (p) => matchesAny(CONTROL_DEFAULTS, p) && !spec.known_control_files.includes(p),
   );
   if (unlisted.length) return fail(`unlisted control files: ${unlisted.join(', ')}`);
-  if (sha256(JSON.stringify(spec)) && e.p.store.read('spec.lock') !== null) {
-    const lock = JSON.parse(e.p.store.read('spec.lock') as string);
-    if (lock.sha256 !== e.s.spec_sha) return fail('H-SPEC: spec.lock changed');
-  }
-  const baselineStore = e.p.store.read('config-baseline');
-  e.configBaseline = baselineStore ?? (await git.configFingerprint());
-  if (!baselineStore) e.p.store.write('config-baseline', e.configBaseline);
+  e.checkSpecLock();
+  const configBaseline = e.s.config_baseline ?? (await git.configFingerprint());
 
   // Baseline: the full suite on the base commit.
   const checkout = e.p.paths.checkout(e.o.runId, 'baseline');
@@ -67,6 +62,7 @@ export async function stepPreflight(e: Engine): Promise<boolean> {
   e.append('gate.finished', null, {
     baseline: true,
     signature,
+    config_baseline: configBaseline,
     tree: await git.treeOf(spec.target.base_commit),
     results: [],
   });
@@ -110,6 +106,7 @@ async function startPlan(e: Engine): Promise<boolean> {
       : [];
   const rung = hold ? hold.rung : e.pickReader(ladder, [], [...skip, ...changed]);
   if (!rung) return pauseNoWorker(e, 'no eligible planner');
+  if (e.capBlocks()) return false;
   const cwd = e.p.paths.checkout(e.o.runId, `plan-${e.nextAttemptId()}`);
   await e.p.git.removeWorktree(cwd);
   await e.p.git.addWorktree(cwd, null, e.spec.target.base_commit);
@@ -136,14 +133,17 @@ async function startPlan(e: Engine): Promise<boolean> {
 }
 
 async function acceptPlan(e: Engine): Promise<boolean> {
-  const plan = e.s.plan_candidate;
+  // Idempotent: a crash part-way through opens only the tasks not yet open.
+  const plan = e.s.plan ?? e.s.plan_candidate;
   if (!plan) return false;
-  e.decide('DP-PLAN', null, 'integrate', null, 'PLANNING', 'EXECUTING');
-  e.append('plan.accepted', null, { plan });
+  if (!e.s.plan) {
+    e.decide('DP-PLAN', null, 'integrate', null, 'PLANNING', 'EXECUTING');
+    e.append('plan.accepted', null, { plan });
+  }
   e.p.store.write('plan.json', JSON.stringify(plan, null, 2));
   for (const id of topoOrder(plan.tasks)) {
     const t = plan.tasks.find((x) => x.task_id === id);
-    if (!t) continue;
+    if (!t || e.s.tasks[id]) continue;
     e.append('task.state_changed', id, {
       from: null,
       to: 'PENDING',
@@ -172,6 +172,7 @@ async function startPlanReview(e: Engine): Promise<boolean> {
     ? hold.rung
     : e.pickReader(ladder, excluded, skipListFor(e, null, 'plan_review'));
   if (!rung) return pauseNoWorker(e, 'no reviewer outside the planner family');
+  if (e.capBlocks()) return false;
   const cwd = e.p.paths.checkout(e.o.runId, `planrev-${e.nextAttemptId()}`);
   await e.p.git.removeWorktree(cwd);
   await e.p.git.addWorktree(cwd, null, e.spec.target.base_commit);
@@ -224,6 +225,7 @@ export async function stepPlanning(e: Engine): Promise<boolean> {
       }
       e.decide('DP-PLAN', null, 'replan', null, 'PLANNING', 'PLANNING');
       e.append('plan.rejected', null, { kind: 'review_failed', findings: reviewed.findings });
+      e.runTo('PLANNING', 'replan', { reason: 'plan review failed' });
       return true;
     }
     const parsed = parseBlock(out.raw.final_message, planSchema);
@@ -256,12 +258,14 @@ export async function stepPlanning(e: Engine): Promise<boolean> {
         errors,
         rung_change: e.s.plan_rejected >= 1,
       });
+      e.runTo('PLANNING', 'replan', { reason: 'plan invalid' });
       return true;
     }
     e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK', plan });
     e.raiseRisk(plan.proposed_risk, 'planner');
     return true;
   }
+  if (e.s.plan) return acceptPlan(e);
   if (e.s.plan_candidate) {
     if (e.profile().plan_review) return startPlanReview(e);
     return acceptPlan(e);

@@ -70,3 +70,7 @@ No CLI executable runs, for any purpose, before the guard passes. All CLI execut
 ## `schema` on agent-written reports
 
 Reports written by a model (`plan.v1`, `worker_report.v1`, `challenge.v1`, `review_report.v1`, `ruling.v1`, `shadow_report.v1`) may omit `schema`, because the contracts' own worked example does. Code knows which step it asked for. All other objects require it.
+
+## Snapshot intent
+
+The frozen event list has no `snapshot.intent`. The finished, unclassified attempt is the durable intent: a crash redoes the snapshot idempotently on the untouched tree, because no attempt can start until this one is classified.

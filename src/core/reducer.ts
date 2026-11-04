@@ -33,6 +33,7 @@ export type AttemptRec = {
   retained: boolean;
   released: boolean;
   fenced: boolean;
+  swept: boolean;
   slot?: number;
   context?: Record<string, unknown>;
 };
@@ -112,6 +113,7 @@ export type GateRun = {
     soft: boolean;
     detail?: string;
   }[];
+  changed?: { path: string; status: string; added: number; removed: number }[];
 };
 export type ReviewRec = {
   review_id: string;
@@ -124,6 +126,8 @@ export type ReviewRec = {
   fingerprints: string[];
   stall_keys: string[];
   mock: boolean;
+  attempt_id?: string;
+  routed: boolean;
 };
 
 export type WaiverRec = Record<string, any> & { id: string; scope: string };
@@ -158,6 +162,7 @@ export type RunR = {
     tree: string | null;
     gate_results: any[];
     ac_evidence: Record<string, string>;
+    accepted: string[];
   };
   mock_review_seen: boolean;
   authors_integrated: string[];
@@ -214,6 +219,9 @@ export type RunR = {
   baseline_signature: string | null;
   plan_review_findings: unknown[];
   conflict_attempts: number;
+  reviewed_attempts: Record<string, string>;
+  pending_retry_integration: string | null;
+  config_baseline: string | null;
 };
 
 export function initialRun(): RunR {
@@ -236,7 +244,14 @@ export function initialRun(): RunR {
     integration: { branch: null, worktree: null, tip: null, merged: [] },
     integrated_repairs: 0,
     next_tint: 1,
-    verify: { generation: 0, passed_stages: [], tree: null, gate_results: [], ac_evidence: {} },
+    verify: {
+      generation: 0,
+      passed_stages: [],
+      tree: null,
+      gate_results: [],
+      ac_evidence: {},
+      accepted: [],
+    },
     mock_review_seen: false,
     authors_integrated: [],
     waivers: [],
@@ -286,6 +301,9 @@ export function initialRun(): RunR {
     baseline_signature: null,
     plan_review_findings: [],
     conflict_attempts: 0,
+    reviewed_attempts: {},
+    pending_retry_integration: null,
+    config_baseline: null,
   };
 }
 
@@ -372,6 +390,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
           tree: null,
           gate_results: [],
           ac_evidence: {},
+          accepted: [],
         };
         s.verify_review = { slot: 0, verdicts: [] };
       }
@@ -394,6 +413,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         s.tasks[t.task_id] = t;
         s.task_order.push(t.task_id);
         if (d.is_integration) {
+          if (d.from_retry) s.pending_retry_integration = null;
           s.next_tint += 1;
           if (d.charge === false) s.conflict_attempts += 1;
           else s.integrated_repairs += 1;
@@ -408,6 +428,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (!taskRowExists(d.from, d.trigger, d.to)) {
         throw new InvariantViolation(`illegal task transition ${d.from} --${d.trigger}--> ${d.to}`);
       }
+      if (d.from === 'REVIEWING' && t.reviews.length) t.reviews[t.reviews.length - 1].routed = true;
       t.state = d.to;
       if (d.next_step) t.next_step = d.next_step;
       if (d.escalation_reason !== undefined) t.escalation_reason = d.escalation_reason;
@@ -502,6 +523,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         retained: false,
         released: false,
         fenced: false,
+        swept: false,
         slot: d.slot,
         context: d.context,
       };
@@ -546,6 +568,11 @@ function apply(s: RunR, ev: LedgerEvent): void {
       }
       return;
     }
+    case 'dispatch.orphans_swept': {
+      const a = s.attempts[d.attempt_id];
+      if (a) a.swept = true;
+      return;
+    }
     case 'attempt.result_fenced': {
       const a = s.attempts[d.attempt_id];
       if (a) a.fenced = true;
@@ -574,12 +601,20 @@ function apply(s: RunR, ev: LedgerEvent): void {
       return;
     }
     case 'gate.finished': {
-      if (d.baseline) s.baseline_signature = d.signature ?? null;
+      if (d.baseline) {
+        s.baseline_signature = d.signature ?? null;
+        if (d.config_baseline) s.config_baseline = d.config_baseline;
+      }
       if (d.integrated) s.verify.gate_results = d.results;
       if (d.ac_id) s.verify.ac_evidence[d.ac_id] = d.status;
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;
       if (t) {
-        t.gate_runs.push({ tree: d.tree, attempt_n: d.attempt_n, results: d.results });
+        t.gate_runs.push({
+          tree: d.tree,
+          attempt_n: d.attempt_n,
+          results: d.results,
+          changed: d.changed,
+        });
         const last = t.stall_history[t.stall_history.length - 1];
         const sig = (d.results as any[])
           .filter((x) => x.status === 'FAIL')
@@ -601,6 +636,10 @@ function apply(s: RunR, ev: LedgerEvent): void {
     }
     case 'review.collected': {
       if (d.mock) s.mock_review_seen = true;
+      if (d.attempt_id) s.reviewed_attempts[d.attempt_id] = d.review_id;
+      if (d.stage === 'acceptance')
+        for (const ac of d.passed_acs ?? [])
+          if (!s.verify.accepted.includes(ac)) s.verify.accepted.push(ac);
       if (d.stage)
         s.verify_review.verdicts.push({
           slot: d.slot ?? 0,
@@ -620,6 +659,8 @@ function apply(s: RunR, ev: LedgerEvent): void {
           fingerprints: d.fingerprints ?? [],
           stall_keys: d.stall_keys ?? [],
           mock: Boolean(d.mock),
+          attempt_id: d.attempt_id,
+          routed: false,
         });
         if (d.tree !== t.stale_review_tree) t.stale_review_tree = d.tree;
         t.reviewer_rung = d.rung;
@@ -746,7 +787,10 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.option_id === 'mark_human_verified' && d.target) s.human_verified.push(d.target);
       if (d.option_id === 'approve') s.approved_gate = true;
       if (s.escalations[d.escalation_id]) s.escalations[d.escalation_id].decision = d;
-      if (d.reset_integrated_repairs) s.integrated_repairs = 0;
+      if (d.reset_integrated_repairs) {
+        s.integrated_repairs = 0;
+        s.pending_retry_integration = d.note ?? '';
+      }
       return;
     }
     case 'operator.request_received':

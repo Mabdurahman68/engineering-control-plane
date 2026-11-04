@@ -6,6 +6,7 @@ import { effectiveVerdict, waiverVoidCause } from '../review/effective.ts';
 import { type AnchorSource, computeFinding, identityErrors } from '../review/fingerprint.ts';
 import { parseBlock } from '../review/report-block.ts';
 import type { Engine } from './engine.ts';
+import { sweepAttempt } from './recovery.ts';
 import type { AttemptRec, TaskRec } from './reducer.ts';
 
 export type StepOutcome = { kind: 'wait' } | { kind: 'failed' } | { kind: 'ok'; raw: RawOutcome };
@@ -59,7 +60,14 @@ export function failReadStep(
 export async function endReadCheckout(e: Engine, a: AttemptRec): Promise<boolean> {
   const before = a.context?.tree_before as string | undefined;
   let unchanged = true;
-  if (before) unchanged = (await e.p.git.worktreeTree(a.cwd)) === before;
+  if (before) {
+    try {
+      unchanged = (await e.p.git.worktreeTree(a.cwd)) === before;
+    } catch {
+      // A crash can return here after the checkout went. A fresh step reruns if its result was lost.
+      unchanged = true;
+    }
+  }
   await e.p.git.removeWorktree(a.cwd);
   return unchanged;
 }
@@ -74,6 +82,7 @@ export async function awaitReadStep(
   if (!raw) return { kind: 'wait' };
   if (!a.finished) e.recordFinish(a, raw);
   raw = raw as RawOutcome;
+  await sweepAttempt(e, a);
   if (a.mode !== 'read_only') return { kind: 'ok', raw };
   const unchanged = await endReadCheckout(e, a);
   if (!unchanged) {
@@ -134,6 +143,24 @@ function anchorSource(e: Engine, commit: string, tree: string): AnchorSource {
 // Applies every code check to one review. Returns null when the review was invalid, already recorded.
 export async function collectReview(e: Engine, input: ReviewInput) {
   const { t, a, raw } = input;
+  const prior = e.s.reviewed_attempts[a.attempt_id];
+  if (prior) {
+    // Recorded before a crash: classify, and rebuild from the stored review.
+    const stored = JSON.parse(e.p.store.read(`reviews/${prior}.json`) as string);
+    if (!e.s.attempts[a.attempt_id].class)
+      e.append('dispatch.classified', a.task_id, { attempt_id: a.attempt_id, class: 'OK' });
+    const eff = effectiveVerdict(
+      stored,
+      e.s.waivers.filter((w) => w.kind === 'finding') as never,
+      e.coveredAcs(),
+    );
+    return {
+      review: stored,
+      report: stored as ReviewReport,
+      effective: eff.verdict,
+      findings: stored.findings,
+    };
+  }
   const parsed = parseBlock(raw.final_message, reviewReportSchema);
   const invalid = (why: string) => {
     e.append('review.invalid', a.task_id, {
@@ -221,8 +248,9 @@ export async function collectReview(e: Engine, input: ReviewInput) {
     .map((fp) => ({ fingerprint: fp, cause: waiverVoidCause(fp, scoped as never) }))
     .filter((v) => v.cause !== null);
   e.p.store.write(`reviews/${review_id}.json`, JSON.stringify(review, null, 2));
-  e.append('dispatch.classified', a.task_id, { attempt_id: a.attempt_id, class: 'OK' });
   e.append('review.collected', a.task_id, {
+    attempt_id: a.attempt_id,
+    passed_acs: report.criteria.filter((c) => c.verdict === 'PASS').map((c) => c.ac),
     review_id,
     tree: input.tree,
     verdict: report.verdict,
@@ -241,6 +269,7 @@ export async function collectReview(e: Engine, input: ReviewInput) {
     waiver_void: voids,
     not_examined: report.looked_at.not_examined,
   });
+  e.append('dispatch.classified', a.task_id, { attempt_id: a.attempt_id, class: 'OK' });
   return { review, report, effective: eff.verdict, findings };
 }
 

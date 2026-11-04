@@ -8,6 +8,7 @@ import {
   checkClean,
   checkEvidence,
   checkGitCfg,
+  checkLedger,
   checkNoCommit,
   checkNoPush,
   checkRepo,
@@ -21,10 +22,11 @@ import { globMatch } from '../../../src/gates/glob.ts';
 import { RealCommandRunner } from '../../../src/gates/runner.ts';
 import { compileSecretPatterns } from '../../../src/gates/secret.ts';
 import { gateSignature } from '../../../src/gates/signature.ts';
+import { Ledger, loadLedger, MemLedgerStore } from '../../../src/ledger/ledger.ts';
 import { loadPolicy } from '../../../src/policy/load.ts';
 import { MemRunStore } from '../../../src/worktree/fs-store.ts';
 import { RealGit } from '../../../src/worktree/real-git.ts';
-import { makeRepo, tempDir, writeTree } from '../../support/repo.ts';
+import { makeRepo, sh, tempDir, writeTree } from '../../support/repo.ts';
 
 const NODE = process.execPath;
 const passCmd = { command: [NODE, '-e', 'process.exit(0)'], timeout_s: 30 };
@@ -451,8 +453,14 @@ describe('hard gates that are pure checks', () => {
     expect(checkCap(1, 2).ok).toBe(true);
     expect(checkCap(2, 2).ok).toBe(false);
   });
-  it('H-LEDGER is covered by the ledger suite', () => {
-    expect(existsSync('test/unit/core/ledger.test.ts')).toBe(true);
+  it('H-LEDGER', () => {
+    const store = new MemLedgerStore();
+    const l = new Ledger(store, 'r', () => '2026-01-01T00:00:00.000Z');
+    l.append('heartbeat', null, {});
+    l.append('heartbeat', null, {});
+    expect(checkLedger(() => loadLedger(store)).ok).toBe(true);
+    store.content = store.content.replace('"seq":1', '"seq":7');
+    expect(checkLedger(() => loadLedger(store)).ok).toBe(false);
   });
 });
 describe('real git driver', () => {
@@ -484,6 +492,19 @@ describe('real git driver', () => {
     expect(await git.treeOf(s.commit)).toBe(s.tree);
     await git.resetWorktree(wt, base);
     expect(existsSync(join(wt, 'b.txt'))).toBe(false);
+  });
+  it('keeps a tracked file that matches .gitignore in the tree hash', async () => {
+    const r = makeRepo({ 'a.txt': 'x\n', '.gitignore': 'build.txt\n' });
+    writeTree(r.dir, { 'build.txt': 'tracked anyway\n' });
+    sh(r.dir, 'add', '-f', 'build.txt');
+    sh(r.dir, 'commit', '-qm', 'tracked');
+    const head = sh(r.dir, 'rev-parse', 'HEAD');
+    const g = new RealGit(r.dir);
+    const w = join(tempDir(), 'w');
+    await g.addWorktree(w, null, head);
+    expect(await g.worktreeTree(w)).toBe(await g.treeOf(head));
+    writeTree(w, { 'build.txt': 'changed\n' });
+    expect(await g.worktreeTree(w)).not.toBe(await g.treeOf(head));
   });
   it('merges clean trees, and reports conflicts with markers', async () => {
     const r = makeRepo({ 'a.txt': 'one\n', 'b.txt': 'two\n' });

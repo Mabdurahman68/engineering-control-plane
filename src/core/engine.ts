@@ -12,12 +12,13 @@ import type {
   WorkerAdapter,
 } from '../contracts/index.ts';
 import { Ledger, LedgerCorrupt, loadLedger } from '../ledger/ledger.ts';
-import { canonical } from '../ledger/canonical.ts';
+import { canonical, sha256 } from '../ledger/canonical.ts';
+import { checkSpecLock } from '../gates/checks.ts';
 import { effectiveDepth, maxRisk, specRuleRisk } from '../policy/risk.ts';
 import { compileSecretPatterns } from '../gates/secret.ts';
 import { optionsFor } from './escalations.ts';
 import { fallbackPlan } from './fallback.ts';
-import type { EngineOptions, EnginePorts } from './ports.ts';
+import { type EngineOptions, type EnginePorts, SimulatedKill } from './ports.ts';
 import {
   applyInPlace,
   type AttemptRec,
@@ -39,7 +40,7 @@ import { stepPlanning, stepPreflight } from './steps-plan.ts';
 import { stepIntegrating } from './steps-integrate.ts';
 import { stepVerifying } from './steps-verify.ts';
 import { stepPushing } from './steps-publish.ts';
-import { reconcileOpenAttempts } from './recovery.ts';
+import { reconcileOpenAttempts, sweepAttempt } from './recovery.ts';
 
 export const EXIT: Partial<Record<RunStateName, number>> = {
   READY_FOR_HUMAN_MERGE: 0,
@@ -71,6 +72,7 @@ type Inflight = {
   handle: { attempt_id: string; pid: number | null; start_time: string | null } | null;
   done: RawOutcome | null;
   startedMs: number;
+  reattached?: boolean;
 };
 export type Health = { ok: boolean; reason: string | null; at: number };
 
@@ -89,7 +91,7 @@ export class Engine {
   wakeAt: number | null = null;
   private lastHeartbeat = 0;
   private counts = new Map<string, number>();
-  configBaseline: string | null = null;
+
   decisionOnResume: Record<string, unknown> | null = null;
 
   constructor(o: EngineOptions, p: EnginePorts) {
@@ -165,8 +167,8 @@ export class Engine {
       subject_tree: subjectTree,
     };
     this.append('decision.made', t?.task_id ?? null, record);
-    if (this.p.observer) {
-      this.p.observer.onDecision({
+    this.observe(() => {
+      this.p.observer?.onDecision({
         decision_id,
         point,
         task_id: t?.task_id ?? null,
@@ -178,6 +180,22 @@ export class Engine {
         refs: record.refs,
         bundle: this.bundle(t),
       });
+    }, decision_id);
+  }
+
+  // A failing observer costs coverage, recorded as such, and never reaches steering.
+  private observe<T>(fn: () => T, decisionId: string | null = null): T | null {
+    if (!this.p.observer) return null;
+    try {
+      return fn();
+    } catch (err) {
+      this.append('shadow.unavailable', null, {
+        decision_id: decisionId,
+        status: 'SHADOW_UNAVAILABLE',
+        class: 'OBSERVER_ERROR',
+        detail: String(err),
+      });
+      return null;
     }
   }
 
@@ -445,6 +463,26 @@ export class Engine {
     return this.inflight.get(attemptId)?.done ?? null;
   }
 
+  // H-SPEC: on every transition out of a worker step, the frozen spec is still the one the run began with.
+  checkSpecLock() {
+    const text = this.p.store.read('spec.lock');
+    const locked = text ? (JSON.parse(text).sha256 as string) : null;
+    const res = checkSpecLock(this.s.spec_sha, locked ?? '');
+    const current = sha256(canonical(this.spec));
+    if (!res.ok || current !== this.s.spec_sha)
+      throw new InvariantViolation(`H-SPEC: ${res.ok ? 'the spec in memory changed' : res.detail}`);
+  }
+
+  // H-CAP, before each dispatch. A cap stops the next invocation, not the next scheduler tick.
+  capBlocks(): boolean {
+    if (this.draining) return true;
+    const cap = this.capReached();
+    if (!cap) return false;
+    this.append('cap.reached', null, { cap });
+    this.draining = 'budget';
+    return true;
+  }
+
   // Records the finish, once. After this the attempt's outcome is on disk and survives a crash.
   recordFinish(a: AttemptRec, raw: RawOutcome) {
     const slot = this.inflight.get(a.attempt_id);
@@ -457,6 +495,7 @@ export class Engine {
       signal: raw.signal,
       wall_clock_s: wall,
     });
+    this.checkSpecLock();
     const adapter = slot?.adapter ?? this.p.adapters[this.rung(a.rung).adapter];
     const usage = adapter.usage(raw);
     this.append('usage.recorded', a.task_id, {
@@ -547,6 +586,7 @@ export class Engine {
     );
     const risk = maxRisk(spec.declared_risk, specRuleRisk(policy.riskRules, spec));
     const depth = effectiveDepth(spec.requested_depth, risk, policy.profiles);
+    this.p.store.write('spec.lock', JSON.stringify({ sha256: this.o.specSha }));
     this.append('run.created', null, {
       spec_id: spec.spec_id,
       spec_sha: this.o.specSha,
@@ -591,15 +631,16 @@ export class Engine {
   async loop(): Promise<RunExit> {
     try {
       for (;;) {
+        this.wakeAt = null;
         this.pollControl();
         this.heartbeat();
-        this.p.observer?.poll();
-        this.wakeAt = null;
+        this.observe(() => this.p.observer?.poll());
         const progressed = await this.step();
         if (RUN_STOPPING.includes(this.s.state) && !this.shouldContinueAfterStop()) break;
         if (!progressed) await this.idle();
       }
     } catch (err) {
+      if (err instanceof SimulatedKill) throw err;
       await this.failFromError(err);
     }
     return this.finish();
@@ -637,9 +678,7 @@ export class Engine {
   }
 
   private async finish(): Promise<RunExit> {
-    if (this.p.observer) {
-      await this.p.observer.drain();
-    }
+    await this.drainObserver();
     const done = RUN_STOPPING.includes(this.s.state);
     if (done) {
       await this.cleanupWorktrees();
@@ -647,6 +686,35 @@ export class Engine {
     }
     this.project();
     return { state: this.s.state, code: EXIT[this.s.state] ?? 1 };
+  }
+
+  // Bounded by the end-of-run wait. An observer that never settles can't hold the run open.
+  private async drainObserver() {
+    if (!this.p.observer) return;
+    const deadline = this.now() + this.p.policy.settings.timeouts.shadow_end_wait_s * 1000;
+    let settled = false;
+    const done = Promise.resolve()
+      .then(() => this.p.observer?.drain())
+      .catch((err) => {
+        this.append('shadow.unavailable', null, {
+          decision_id: null,
+          status: 'SHADOW_UNAVAILABLE',
+          class: 'OBSERVER_ERROR',
+          detail: String(err),
+        });
+      })
+      .finally(() => {
+        settled = true;
+        this.notifyWork();
+      });
+    while (!settled && this.now() < deadline) {
+      await this.p.clock.idle(
+        deadline,
+        () => settled,
+        (fn) => this.listeners.push(fn),
+      );
+    }
+    if (settled) await done;
   }
 
   private async cleanupWorktrees() {
@@ -666,7 +734,21 @@ export class Engine {
     this.p.projectRun?.(this);
   }
 
+  // A re-attached relay past its hard deadline stops being trusted (state machine §7.4).
+  private enforceDeadlines() {
+    for (const [id, slot] of this.inflight) {
+      const a = this.s.attempts[id];
+      if (!slot.reattached || slot.done || !a) continue;
+      const limit = a.deadline_ms + 60_000;
+      if (this.now() >= limit && slot.handle) {
+        this.append('cancel.sent', a.task_id, { attempt_id: id, reason: 'deadline' });
+        void slot.adapter.cancel(slot.handle as never);
+      } else this.setWake(limit);
+    }
+  }
+
   private heartbeat() {
+    this.enforceDeadlines();
     const now = this.now();
     if (this.lastHeartbeat && now - this.lastHeartbeat > 120_000) {
       this.append('host.sleep_detected', null, { gap_ms: now - this.lastHeartbeat });
@@ -692,7 +774,7 @@ export class Engine {
   }
 
   private async idle() {
-    const obs = this.p.observer?.nextWake() ?? null;
+    const obs = this.observe(() => this.p.observer?.nextWake() ?? null) ?? null;
     let wake = this.wakeAt;
     if (obs !== null && (wake === null || obs < wake)) wake = obs;
     if (this.notified) {
@@ -926,6 +1008,7 @@ export class Engine {
         slot.done = { ...raw, cancelled_by_us: true };
       }
       if (a && !a.finished) this.recordFinish(a, slot.done ?? spawnFailed('cancelled'));
+      if (a) await sweepAttempt(this, a);
       if (a && a.class === null) {
         this.append('dispatch.classified', a.task_id, { attempt_id: id, class: 'CANCELLED' });
         this.releaseIfUnretained(a);
@@ -935,6 +1018,9 @@ export class Engine {
   }
 
   releaseIfUnretained(a: AttemptRec) {
+    // Liveness first: a released family or a reused worktree must have no writer left.
+    if (!this.s.attempts[a.attempt_id].swept)
+      throw new InvariantViolation(`release of ${a.attempt_id} before its sweep`);
     if (a.mode === 'write' && !a.retained && !a.released) {
       this.append('reservation.released', a.task_id, { attempt_id: a.attempt_id });
     }
@@ -1043,7 +1129,7 @@ export class Engine {
       }
       case 'retry_integration': {
         if (t) this.taskTo(t, 'TASK_CANCELLED', 'run_cancelling');
-        this.pendingRetryIntegration = d.note ?? '';
+
         this.runTo('INTEGRATING', 'decision_integrating', { reason: d.note });
         return;
       }
@@ -1095,8 +1181,6 @@ export class Engine {
     }
   }
 
-  pendingRetryIntegration: string | null = null;
-
   private unblockAfter() {
     // A dependent stays blocked until its dependency passes (stepTasks clears it).
   }
@@ -1120,11 +1204,13 @@ export class Engine {
     }
   }
 
+  // `only`, when given, limits the ruling to those fingerprints: a ruling on one finding waives no other.
   addFindingWaivers(
     t: TaskRec,
     reviewId: string | null,
     disagreementId: string | null,
     tree: string,
+    only: string[] | null = null,
   ) {
     const review = reviewId
       ? JSON.parse(this.p.store.read(`reviews/${reviewId}.json`) ?? 'null')
@@ -1135,6 +1221,7 @@ export class Engine {
     );
     for (const i of blocking) {
       const f = review.findings[i];
+      if (only && !only.includes(f.fingerprint)) continue;
       const links: { criterion: string | null; semantic_check: string | null }[] = [];
       for (const c of review.criteria)
         if (c.verdict === 'FAIL' && c.finding_refs.includes(i))
@@ -1174,9 +1261,6 @@ export class Engine {
   }
   familyOfModel(model: string) {
     return familyOfModel(this.p.policy, model);
-  }
-  canonicalSpecHash() {
-    return canonical(this.spec);
   }
 }
 

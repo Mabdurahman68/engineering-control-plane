@@ -39,6 +39,7 @@ export const RUN_ROWS: Row<RunStateName>[] = [
   r('PREFLIGHT', 'preflight_failed', 'FAILED'),
   r('PREFLIGHT', 'no_worker', 'PAUSED_NO_WORKER'),
   r('PLANNING', 'plan_valid', 'EXECUTING'),
+  r('PLANNING', 'replan', 'PLANNING'),
   r('PLANNING', 'plan_invalid', 'ESCALATION_REQUIRED'),
   r('PLANNING', 'spec_defect', 'ESCALATION_REQUIRED'),
   r('EXECUTING', 'all_tasks_passed', 'INTEGRATING'),
