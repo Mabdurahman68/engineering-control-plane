@@ -5,7 +5,9 @@ import { gateSignature } from '../gates/signature.ts';
 
 import { parseBlock } from '../review/report-block.ts';
 import { assemble, specExcerpt } from './briefs.ts';
+import type { RawOutcome } from '../contracts/index.ts';
 import type { Engine } from './engine.ts';
+import type { AttemptRec } from './reducer.ts';
 import { planErrors, topoOrder } from './plan-validate.ts';
 import {
   awaitReadStep,
@@ -214,61 +216,73 @@ export async function stepPlanning(e: Engine): Promise<boolean> {
         scopeAcs: e.spec.acceptance_criteria.map((c) => c.id),
         changedFiles: [],
         authors: e.s.planner_family ? [e.s.planner_family] : [],
+        stage: 'plan_review',
         specSha: reviewSpecSha(e),
       });
       if (!reviewed) return true;
-      if (reviewed.effective === 'PASS') return acceptPlan(e);
-      if (e.s.plan_reviews_failed >= 1) {
-        e.append('plan.rejected', null, { kind: 'review_failed', findings: reviewed.findings });
-        e.escalate('PLAN_INVALID', null, 'plan review failed twice', 'plan_invalid');
-        return true;
-      }
-      e.decide('DP-PLAN', null, 'replan', null, 'PLANNING', 'PLANNING');
-      e.append('plan.rejected', null, { kind: 'review_failed', findings: reviewed.findings });
-      e.runTo('PLANNING', 'replan', { reason: 'plan review failed' });
-      return true;
+      return routePlanReview(e, reviewed.effective, reviewed.findings);
     }
-    const parsed = parseBlock(out.raw.final_message, planSchema);
-    if (!parsed.ok) {
-      failReadStep(e, null, a, 'MALFORMED');
-      return true;
-    }
-    const plan = parsed.value;
-    if (plan.spec_defects.length) {
-      e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK' });
-      e.escalate(
-        'SPEC_DEFECT',
-        null,
-        plan.spec_defects.map((d) => d.text).join('; '),
-        'spec_defect',
-      );
-      return true;
-    }
-    const errors = planErrors(plan, e.spec, e.profile().max_tasks, e.s.depth === 'QUICK');
-    if (errors.length) {
-      e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK' });
-      if (e.s.plan_rejected >= 2) {
-        e.append('plan.rejected', null, { kind: 'invalid', errors });
-        e.escalate('PLAN_INVALID', null, errors.join('; '), 'plan_invalid');
-        return true;
-      }
-      e.decide('DP-PLAN', null, 'replan', null, 'PLANNING', 'PLANNING');
-      e.append('plan.rejected', null, {
-        kind: 'invalid',
-        errors,
-        rung_change: e.s.plan_rejected >= 1,
-      });
-      e.runTo('PLANNING', 'replan', { reason: 'plan invalid' });
-      return true;
-    }
-    e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK', plan });
-    e.raiseRisk(plan.proposed_risk, 'planner');
-    return true;
+    return collectPlan(e, a, out.raw);
   }
   if (e.s.plan) return acceptPlan(e);
+  if (e.s.plan_pending_fail) {
+    const stored = JSON.parse(e.p.store.read(`reviews/${e.s.plan_pending_fail}.json`) as string);
+    return routePlanReview(e, 'FAIL', stored.findings);
+  }
   if (e.s.plan_candidate) {
-    if (e.profile().plan_review) return startPlanReview(e);
+    if (e.profile().plan_review && !e.s.plan_reviewed) return startPlanReview(e);
     return acceptPlan(e);
   }
   return startPlan(e);
+}
+
+function routePlanReview(
+  e: Engine,
+  effective: string,
+  findings: unknown[],
+): boolean | Promise<boolean> {
+  if (effective === 'PASS') return acceptPlan(e);
+  if (e.s.plan_reviews_failed >= 1) {
+    e.append('plan.rejected', null, { kind: 'review_failed', findings });
+    e.escalate('PLAN_INVALID', null, 'plan review failed twice', 'plan_invalid');
+    return true;
+  }
+  e.decide('DP-PLAN', null, 'replan', null, 'PLANNING', 'PLANNING');
+  e.append('plan.rejected', null, { kind: 'review_failed', findings });
+  e.runTo('PLANNING', 'replan', { reason: 'plan review failed' });
+  return true;
+}
+
+function collectPlan(e: Engine, a: AttemptRec, raw: RawOutcome): boolean {
+  const parsed = parseBlock(raw.final_message, planSchema);
+  if (!parsed.ok) {
+    failReadStep(e, null, a, 'MALFORMED');
+    return true;
+  }
+  const plan = parsed.value;
+  if (plan.spec_defects.length) {
+    e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK' });
+    e.escalate('SPEC_DEFECT', null, plan.spec_defects.map((d) => d.text).join('; '), 'spec_defect');
+    return true;
+  }
+  const errors = planErrors(plan, e.spec, e.profile().max_tasks, e.s.depth === 'QUICK');
+  if (errors.length) {
+    e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK' });
+    if (e.s.plan_rejected >= 2) {
+      e.append('plan.rejected', null, { kind: 'invalid', errors });
+      e.escalate('PLAN_INVALID', null, errors.join('; '), 'plan_invalid');
+      return true;
+    }
+    e.decide('DP-PLAN', null, 'replan', null, 'PLANNING', 'PLANNING');
+    e.append('plan.rejected', null, {
+      kind: 'invalid',
+      errors,
+      rung_change: e.s.plan_rejected >= 1,
+    });
+    e.runTo('PLANNING', 'replan', { reason: 'plan invalid' });
+    return true;
+  }
+  e.append('dispatch.classified', null, { attempt_id: a.attempt_id, class: 'OK', plan });
+  e.raiseRisk(plan.proposed_risk, 'planner');
+  return true;
 }

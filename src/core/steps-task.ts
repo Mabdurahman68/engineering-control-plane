@@ -286,6 +286,7 @@ async function stepCollecting(e: Engine, t: TaskRec): Promise<boolean> {
   }
   const raw = e.loadRaw(a);
   if (!raw) throw new InvariantViolation(`attempt ${a.attempt_id} has no outcome`);
+  e.checkSpecLock();
   await sweepAttempt(e, a);
   let cls: FailureClass = raw.spawn_failed ? 'UNKNOWN' : e.classifyRaw(a, raw);
   let report: WorkerReport | null = null;

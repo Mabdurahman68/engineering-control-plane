@@ -34,6 +34,7 @@ export type AttemptRec = {
   released: boolean;
   fenced: boolean;
   swept: boolean;
+  tree_ok: boolean | null;
   slot?: number;
   context?: Record<string, unknown>;
 };
@@ -163,6 +164,7 @@ export type RunR = {
     gate_results: any[];
     ac_evidence: Record<string, string>;
     accepted: string[];
+    pending_fail: string | null;
   };
   mock_review_seen: boolean;
   authors_integrated: string[];
@@ -213,7 +215,10 @@ export type RunR = {
   run_step_retries: Record<string, number>;
   plan_reasks: number;
   plan_rung_changes: number;
-  verify_review: { slot: number; verdicts: { slot: number; verdict: string; review_id: string }[] };
+  verify_review: {
+    slot: number;
+    verdicts: { slot: number; verdict: string; review_id: string; stage: string }[];
+  };
   plan_candidate: Plan | null;
   planner_family: string | null;
   baseline_signature: string | null;
@@ -222,6 +227,9 @@ export type RunR = {
   reviewed_attempts: Record<string, string>;
   pending_retry_integration: string | null;
   config_baseline: string | null;
+  plan_reviewed: boolean;
+  plan_pending_fail: string | null;
+  pending_decision: Record<string, any> | null;
 };
 
 export function initialRun(): RunR {
@@ -251,6 +259,7 @@ export function initialRun(): RunR {
       gate_results: [],
       ac_evidence: {},
       accepted: [],
+      pending_fail: null,
     },
     mock_review_seen: false,
     authors_integrated: [],
@@ -304,6 +313,9 @@ export function initialRun(): RunR {
     reviewed_attempts: {},
     pending_retry_integration: null,
     config_baseline: null,
+    plan_reviewed: false,
+    plan_pending_fail: null,
+    pending_decision: null,
   };
 }
 
@@ -379,6 +391,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (!runRowExists(d.from, d.trigger, d.to)) {
         throw new InvariantViolation(`illegal run transition ${d.from} --${d.trigger}--> ${d.to}`);
       }
+      if (d.from === 'ESCALATION_REQUIRED') s.pending_decision = null;
       s.state = d.to;
       s.reason = d.reason ?? null;
       if (d.resume_to !== undefined) s.resume_to = d.resume_to;
@@ -391,6 +404,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
           gate_results: [],
           ac_evidence: {},
           accepted: [],
+          pending_fail: null,
         };
         s.verify_review = { slot: 0, verdicts: [] };
       }
@@ -478,6 +492,8 @@ function apply(s: RunR, ev: LedgerEvent): void {
       return;
     case 'plan.rejected':
       s.plan_rejected += 1;
+      s.plan_reviewed = false;
+      s.plan_pending_fail = null;
       if (d.kind === 'review_failed') s.plan_reviews_failed += 1;
       if (d.kind === 'invalid') s.plan_reasks += 1;
       if (d.rung_change) s.plan_rung_changes += 1;
@@ -524,6 +540,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         released: false,
         fenced: false,
         swept: false,
+        tree_ok: null,
         slot: d.slot,
         context: d.context,
       };
@@ -640,12 +657,18 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.stage === 'acceptance')
         for (const ac of d.passed_acs ?? [])
           if (!s.verify.accepted.includes(ac)) s.verify.accepted.push(ac);
-      if (d.stage)
+      if (d.stage === 'plan_review') {
+        if (d.effective === 'PASS') s.plan_reviewed = true;
+        else s.plan_pending_fail = d.review_id;
+      } else if (d.stage) {
         s.verify_review.verdicts.push({
           slot: d.slot ?? 0,
-          verdict: d.verdict,
+          verdict: d.effective ?? d.verdict,
           review_id: d.review_id,
+          stage: d.stage,
         });
+        if (d.effective === 'FAIL') s.verify.pending_fail = d.review_id;
+      }
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;
       if (t) {
         t.reviews.push({
@@ -758,6 +781,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
     case 'merge.conflict':
       return;
     case 'tree.identity_checked':
+      if (d.attempt_id && s.attempts[d.attempt_id]) s.attempts[d.attempt_id].tree_ok = d.ok;
       if (d.stage && s.state === 'VERIFYING' && !s.verify.passed_stages.includes(d.stage)) {
         s.verify.passed_stages.push(d.stage);
         s.verify.tree = d.tree ?? s.verify.tree;
@@ -784,6 +808,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
       return;
     case 'operator.decision': {
       s.open_escalation = null;
+      s.pending_decision = d;
       if (d.option_id === 'mark_human_verified' && d.target) s.human_verified.push(d.target);
       if (d.option_id === 'approve') s.approved_gate = true;
       if (s.escalations[d.escalation_id]) s.escalations[d.escalation_id].decision = d;

@@ -486,6 +486,7 @@ export class Engine {
   // Records the finish, once. After this the attempt's outcome is on disk and survives a crash.
   recordFinish(a: AttemptRec, raw: RawOutcome) {
     const slot = this.inflight.get(a.attempt_id);
+    this.checkSpecLock();
     const wall = slot ? (this.now() - slot.startedMs) / 1000 : 0;
     this.p.store.write(`attempts/${a.attempt_id}/raw.json`, JSON.stringify(raw));
     this.append('dispatch.finished', a.task_id, {
@@ -495,7 +496,6 @@ export class Engine {
       signal: raw.signal,
       wall_clock_s: wall,
     });
-    this.checkSpecLock();
     const adapter = slot?.adapter ?? this.p.adapters[this.rung(a.rung).adapter];
     const usage = adapter.usage(raw);
     this.append('usage.recorded', a.task_id, {
@@ -619,7 +619,14 @@ export class Engine {
       accept_policy: opts.acceptPolicy ? opts.policySha : undefined,
       extend_budget: opts.extendBudget,
     });
-    await reconcileOpenAttempts(this);
+    try {
+      await reconcileOpenAttempts(this);
+      if (this.s.pending_decision) this.completeDecision();
+    } catch (err) {
+      if (err instanceof SimulatedKill) throw err;
+      await this.failFromError(err);
+      return;
+    }
     if (opts.decision) this.applyDecision(opts.decision);
     if (PAUSED.includes(this.s.state)) {
       const to = this.s.resume_to ?? 'EXECUTING';
@@ -633,6 +640,7 @@ export class Engine {
       for (;;) {
         this.wakeAt = null;
         this.pollControl();
+        await this.enforceDeadlines();
         this.heartbeat();
         this.observe(() => this.p.observer?.poll());
         const progressed = await this.step();
@@ -734,21 +742,33 @@ export class Engine {
     this.p.projectRun?.(this);
   }
 
-  // A re-attached relay past its hard deadline stops being trusted (state machine §7.4).
-  private enforceDeadlines() {
+  // A re-attached relay past its hard deadline stops being trusted (state machine §7.4). It goes down
+  // the shared kill-and-confirm path, even if the adapter's cancel never settles.
+  private async enforceDeadlines() {
     for (const [id, slot] of this.inflight) {
       const a = this.s.attempts[id];
       if (!slot.reattached || slot.done || !a) continue;
       const limit = a.deadline_ms + 60_000;
-      if (this.now() >= limit && slot.handle) {
-        this.append('cancel.sent', a.task_id, { attempt_id: id, reason: 'deadline' });
-        void slot.adapter.cancel(slot.handle as never);
-      } else this.setWake(limit);
+      if (this.now() < limit) {
+        this.setWake(limit);
+        continue;
+      }
+      this.append('cancel.sent', a.task_id, { attempt_id: id, reason: 'deadline' });
+      if (slot.handle)
+        void Promise.resolve(slot.adapter.cancel(slot.handle as never)).catch(() => {});
+      await sweepAttempt(this, a);
+      slot.done = {
+        ...spawnFailed('re-attached relay passed its deadline'),
+        spawn_failed: false,
+        relay_status: 'timeout',
+        exit_code: 143,
+        result_present: true,
+      };
+      this.notifyWork();
     }
   }
 
   private heartbeat() {
-    this.enforceDeadlines();
     const now = this.now();
     if (this.lastHeartbeat && now - this.lastHeartbeat > 120_000) {
       this.append('host.sleep_detected', null, { gap_ms: now - this.lastHeartbeat });
@@ -1015,6 +1035,18 @@ export class Engine {
       }
     }
     this.inflight.clear();
+    // Including attempts from before a crash, which aren't in the in-memory map.
+    for (const a of Object.values(this.s.attempts)) {
+      if (a.fenced || a.swept) continue;
+      await sweepAttempt(this, a);
+      if (a.class === null) {
+        this.append('dispatch.classified', a.task_id, {
+          attempt_id: a.attempt_id,
+          class: 'CANCELLED',
+        });
+        this.releaseIfUnretained(a);
+      }
+    }
   }
 
   releaseIfUnretained(a: AttemptRec) {
@@ -1094,8 +1126,6 @@ export class Engine {
     if (!rec.options.some((o: any) => o.id === d.option_id)) {
       throw new DecisionRefused(`${d.option_id} isn't an option for ${rec.reason}`);
     }
-    const t: TaskRec | null = rec.task_id ? this.s.tasks[rec.task_id] : null;
-    const back = (this.s.resume_to ?? 'EXECUTING') as RunStateName;
     const resetIntegrated = d.option_id === 'retry_integration';
     this.append('operator.decision', rec.task_id, {
       escalation_id: id,
@@ -1106,6 +1136,18 @@ export class Engine {
       target: d.target ?? rec.task_id,
       reset_integrated_repairs: resetIntegrated,
     });
+    this.completeDecision();
+  }
+
+  // Runs after the decision is on the ledger, and again on resume if a crash fell mid-way. Each step
+  // checks state first, so repeating it changes nothing.
+  completeDecision() {
+    const d = this.s.pending_decision;
+    if (!d) return;
+    const rec = this.s.escalations[d.escalation_id];
+    const t: TaskRec | null = rec.task_id ? this.s.tasks[rec.task_id] : null;
+    const escalated = t?.state === 'TASK_ESCALATED';
+    const back = (this.s.resume_to ?? 'EXECUTING') as RunStateName;
     const trigger = (to: RunStateName) =>
       to === 'INTEGRATING'
         ? 'decision_integrating'
@@ -1121,14 +1163,17 @@ export class Engine {
         return;
       }
       case 'retry_task': {
-        const task = t as TaskRec;
-        this.taskTo(task, 'READY', 'owner_retry', { reset: true, escalation_reason: null });
-        this.unblockAfter();
+        if (escalated)
+          this.taskTo(t as TaskRec, 'READY', 'owner_retry', {
+            reset: true,
+            escalation_reason: null,
+            note: d.note,
+          });
         this.runTo('EXECUTING', 'decision_executing', { reason: d.note });
         return;
       }
       case 'retry_integration': {
-        if (t) this.taskTo(t, 'TASK_CANCELLED', 'run_cancelling');
+        if (t && escalated) this.taskTo(t, 'TASK_CANCELLED', 'run_cancelling');
 
         this.runTo('INTEGRATING', 'decision_integrating', { reason: d.note });
         return;
@@ -1138,7 +1183,9 @@ export class Engine {
         const task = t as TaskRec;
         this.recordOwnerWaivers(task, d.option_id);
         const noSnapshot = task.is_integration && task.snapshots.length === 0;
-        if (noSnapshot)
+        if (!escalated) {
+          // Already moved before the crash.
+        } else if (noSnapshot)
           this.taskTo(task, 'TASK_PASSED', 'owner_ruled_no_snapshot', { escalation_reason: null });
         else if (d.option_id === 'waive')
           this.taskTo(task, 'GATING', 'owner_waive', {
@@ -1162,11 +1209,12 @@ export class Engine {
           return;
         }
         const task = t as TaskRec;
-        this.taskTo(task, 'REPAIR_PENDING', 'owner_reject', {
-          next_step: 'repair',
-          reset_repairs: true,
-          escalation_reason: null,
-        });
+        if (escalated)
+          this.taskTo(task, 'REPAIR_PENDING', 'owner_reject', {
+            next_step: 'repair',
+            reset_repairs: true,
+            escalation_reason: null,
+          });
         this.runTo(back, trigger(back), { reason: d.note });
         return;
       }
@@ -1181,8 +1229,25 @@ export class Engine {
     }
   }
 
-  private unblockAfter() {
-    // A dependent stays blocked until its dependency passes (stepTasks clears it).
+  private hasWaiver(
+    scope: string,
+    r: {
+      gate_id?: string | null;
+      signature_element?: string | null;
+      finding_fingerprint?: string | null;
+      criterion?: string | null;
+      semantic_check?: string | null;
+    },
+  ) {
+    return this.s.waivers.some(
+      (w: any) =>
+        w.scope === scope &&
+        (w.resolves.gate_id ?? null) === (r.gate_id ?? null) &&
+        (w.resolves.signature_element ?? null) === (r.signature_element ?? null) &&
+        (w.resolves.finding_fingerprint ?? null) === (r.finding_fingerprint ?? null) &&
+        (w.resolves.criterion ?? null) === (r.criterion ?? null) &&
+        (w.resolves.semantic_check ?? null) === (r.semantic_check ?? null),
+    );
   }
 
   private recordOwnerWaivers(t: TaskRec, option: string) {
@@ -1193,6 +1258,7 @@ export class Engine {
       for (const r of lastRun?.results ?? []) {
         if (r.status !== 'FAIL' || !r.soft) continue;
         for (const el of (r as any).uncovered ?? []) {
+          if (this.hasWaiver(t.task_id, { gate_id: r.id, signature_element: el })) continue;
           this.append('waiver.recorded', t.task_id, {
             waiver: gateWaiver(nextId(), r.id, el, null, t.task_id, tree),
           });
@@ -1231,6 +1297,7 @@ export class Engine {
           links.push({ criterion: null, semantic_check: name });
       }
       for (const link of links.length ? links : [{ criterion: null, semantic_check: null }]) {
+        if (this.hasWaiver(t.task_id, { finding_fingerprint: f.fingerprint, ...link })) continue;
         this.append('waiver.recorded', t.task_id, {
           waiver: {
             schema: 'waiver.v1',

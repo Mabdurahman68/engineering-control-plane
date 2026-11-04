@@ -606,7 +606,9 @@ export class MockAdapter implements WorkerAdapter {
 
   async attach(rec: DispatchRecord): Promise<RunHandle | 'gone'> {
     const run = this.world.survivors?.get(rec.attempt_id);
-    if (!run || run.settled) return 'gone';
+    if (!run) return 'gone';
+    // With no PID, the caller has already killed the relay, and wants only a published result.
+    if (rec.pid === null ? !run.settled : run.settled) return 'gone';
     this.runs.set(rec.attempt_id, run);
     return { attempt_id: rec.attempt_id, pid: run.pid, start_time: run.start_time };
   }

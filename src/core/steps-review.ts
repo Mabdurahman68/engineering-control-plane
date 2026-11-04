@@ -57,19 +57,30 @@ export function failReadStep(
   e.applyFailurePlan(a, cls, plan, key, null);
 }
 
-export async function endReadCheckout(e: Engine, a: AttemptRec): Promise<boolean> {
-  const before = a.context?.tree_before as string | undefined;
-  let unchanged = true;
-  if (before) {
-    try {
-      unchanged = (await e.p.git.worktreeTree(a.cwd)) === before;
-    } catch {
-      // A crash can return here after the checkout went. A fresh step reruns if its result was lost.
-      unchanged = true;
-    }
+// The identity result goes on the ledger before the checkout does, so a crash can't lose it.
+// Returns null when the checkout is gone with nothing recorded: the output can't be trusted.
+export async function endReadCheckout(e: Engine, a: AttemptRec): Promise<boolean | null> {
+  const recorded = e.s.attempts[a.attempt_id].tree_ok;
+  if (recorded !== null) {
+    await e.p.git.removeWorktree(a.cwd);
+    return recorded;
   }
+  const before = a.context?.tree_before as string | undefined;
+  let after: string;
+  try {
+    after = await e.p.git.worktreeTree(a.cwd);
+  } catch {
+    return null;
+  }
+  const ok = after === before;
+  e.append('tree.identity_checked', a.task_id, {
+    attempt_id: a.attempt_id,
+    phase: 'read_only',
+    ok,
+    tree: before,
+  });
   await e.p.git.removeWorktree(a.cwd);
-  return unchanged;
+  return ok;
 }
 
 // Waits for the step's result. On any failure, this records it and the caller just returns.
@@ -80,11 +91,24 @@ export async function awaitReadStep(
 ): Promise<StepOutcome> {
   let raw = a.finished ? e.loadRaw(a) : e.outcomeOf(a.attempt_id);
   if (!raw) return { kind: 'wait' };
+  e.checkSpecLock();
   if (!a.finished) e.recordFinish(a, raw);
   raw = raw as RawOutcome;
   await sweepAttempt(e, a);
   if (a.mode !== 'read_only') return { kind: 'ok', raw };
   const unchanged = await endReadCheckout(e, a);
+  if (unchanged === null) {
+    // No evidence that the checkout stayed read-only: discard the output, and run the step again.
+    e.append('evidence.discarded_stale', a.task_id, {
+      attempt_id: a.attempt_id,
+      reason: 'review checkout missing',
+    });
+    e.append('attempt.result_fenced', a.task_id, {
+      attempt_id: a.attempt_id,
+      reason: 'review checkout missing',
+    });
+    return { kind: 'failed' };
+  }
   if (!unchanged) {
     e.append('dispatch.classified', a.task_id, {
       attempt_id: a.attempt_id,

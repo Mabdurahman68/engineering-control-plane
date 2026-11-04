@@ -34,7 +34,10 @@ function repairOrExhaust(
   o: { findings?: unknown[]; gate_runs?: unknown[]; split?: { review_id: string; rung: string } },
   refs: { fingerprints?: string[]; signatures?: string[] } = {},
 ): boolean {
-  if (e.s.integrated_repairs >= e.profile().integrated_repair_max) {
+  const alreadyOpen = Object.values(e.s.tasks).some(
+    (x) => x.is_integration && !['TASK_PASSED', 'TASK_CANCELLED'].includes(x.state),
+  );
+  if (!alreadyOpen && e.s.integrated_repairs >= e.profile().integrated_repair_max) {
     e.decide(
       'DP-VERIFY',
       null,
@@ -48,6 +51,14 @@ function repairOrExhaust(
     return true;
   }
   e.decide('DP-VERIFY', null, 'repair', null, 'VERIFYING', 'INTEGRATING', refs);
+  // A crash may have fallen after the task opened and before the run moved.
+  const open = Object.values(e.s.tasks).find(
+    (x) => x.is_integration && !['TASK_PASSED', 'TASK_CANCELLED'].includes(x.state),
+  );
+  if (open) {
+    e.runTo('INTEGRATING', 'repairable');
+    return true;
+  }
   const t = openIntegrationTask(e, entry, o);
   if (o.split) {
     openDisagreement(e, t, {
@@ -247,6 +258,47 @@ function slotsFor(e: Engine, stage: string): number {
   return stage === 'acceptance' ? e.quorum() : 1;
 }
 
+// Derived from the ledger, so a crash after the review was recorded routes it the same way.
+function routeVerifyFail(
+  e: Engine,
+  reviewId: string,
+  stage: string,
+  rung: string,
+  tree: string,
+): boolean {
+  const review = JSON.parse(e.p.store.read(`reviews/${reviewId}.json`) as string);
+  const refs = { fingerprints: review.findings.map((f: any) => f.fingerprint) };
+  if (reportHasOnlyUnverifiableFailures(review, e.coveredAcs())) {
+    const ac = review.criteria.find(
+      (c: any) => c.verdict === 'UNVERIFIABLE' && !e.coveredAcs().includes(c.ac),
+    );
+    e.decide(
+      'DP-VERIFY',
+      null,
+      'escalate',
+      'UNVERIFIABLE_CRITERION',
+      'VERIFYING',
+      'ESCALATION_REQUIRED',
+      refs,
+      tree,
+    );
+    e.escalate(
+      'UNVERIFIABLE_CRITERION',
+      null,
+      `${ac?.ac} can't be verified by the system`,
+      'unverifiable',
+    );
+    return true;
+  }
+  const others = e.s.verify_review.verdicts.filter(
+    (v) => v.review_id !== reviewId && v.stage === stage,
+  );
+  if (stage === 'acceptance' && others.some((v) => v.verdict === 'PASS')) {
+    return repairOrExhaust(e, 'TASK_DISAGREEMENT', { split: { review_id: reviewId, rung } }, refs);
+  }
+  return repairOrExhaust(e, 'REPAIR_PENDING', { findings: review.findings }, refs);
+}
+
 async function stageReview(e: Engine, stage: string): Promise<boolean> {
   const tip = tipOf(e);
   const tree = await e.p.git.treeOf(tip);
@@ -273,50 +325,17 @@ async function stageReview(e: Engine, stage: string): Promise<boolean> {
       specSha: reviewSpecSha(e),
     });
     if (!reviewed) return true;
-    const refs = { fingerprints: reviewed.findings.map((f: any) => f.fingerprint) };
-    if (reviewed.effective === 'FAIL') {
-      if (reportHasOnlyUnverifiableFailures(reviewed.report, e.coveredAcs())) {
-        const ac = reviewed.report.criteria.find(
-          (c) => c.verdict === 'UNVERIFIABLE' && !e.coveredAcs().includes(c.ac),
-        );
-        e.decide(
-          'DP-VERIFY',
-          null,
-          'escalate',
-          'UNVERIFIABLE_CRITERION',
-          'VERIFYING',
-          'ESCALATION_REQUIRED',
-          refs,
-          tree,
-        );
-        e.escalate(
-          'UNVERIFIABLE_CRITERION',
-          null,
-          `${ac?.ac} can't be verified by the system`,
-          'unverifiable',
-        );
-        return true;
-      }
-      const prior = e.s.verify_review.verdicts.filter(
-        (v) => v.review_id !== reviewed.review.review_id,
-      );
-      if (stage === 'acceptance' && prior.some((v) => v.verdict === 'PASS')) {
-        return repairOrExhaust(
-          e,
-          'TASK_DISAGREEMENT',
-          { split: { review_id: reviewed.review.review_id, rung: a.rung } },
-          refs,
-        );
-      }
-      return repairOrExhaust(e, 'REPAIR_PENDING', { findings: reviewed.findings }, refs);
-    }
+    if (reviewed.effective === 'FAIL')
+      return routeVerifyFail(e, reviewed.review.review_id, stage, a.rung, tree);
 
-    const done = e.s.verify_review.verdicts.filter(
-      (v) => v.slot >= 0 && stage === 'acceptance',
-    ).length;
-    if (stage !== 'acceptance' || done >= slotsFor(e, stage)) {
-      e.append('tree.identity_checked', null, { stage, tree, ok: true });
-    }
+    return true;
+  }
+  // Recorded before a crash, and not yet acted on.
+  const passed = e.s.verify_review.verdicts.filter(
+    (v) => v.stage === stage && v.verdict === 'PASS',
+  ).length;
+  if (passed >= slotsFor(e, stage)) {
+    e.append('tree.identity_checked', null, { stage, tree, ok: true });
     return true;
   }
   if (e.capBlocks()) return false;
@@ -469,6 +488,17 @@ async function finishVerify(e: Engine): Promise<boolean> {
 }
 
 export async function stepVerifying(e: Engine): Promise<boolean> {
+  const pending = e.s.verify.pending_fail;
+  if (pending && !currentAttempt(e.s, null, ['acceptance', 'adversarial', 'lens'])) {
+    const v = e.s.verify_review.verdicts.find((x) => x.review_id === pending);
+    return routeVerifyFail(
+      e,
+      pending,
+      v?.stage ?? 'acceptance',
+      'unknown',
+      await e.p.git.treeOf(tipOf(e)),
+    );
+  }
   const stages = stagesFor(e);
   const next = stages.find((s) => !e.s.verify.passed_stages.includes(s));
   if (!next) return finishVerify(e);

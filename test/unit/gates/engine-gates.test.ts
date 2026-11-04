@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SimulatedKill } from '../../../src/core/ports.ts';
 import { replay } from '../../../src/core/reducer.ts';
-import { events, makeSim, ofType, resumeSim, runSim } from '../../support/harness.ts';
+import { decision, events, makeSim, ofType, resumeSim, runSim } from '../../support/harness.ts';
 
 const finalState = (s: ReturnType<typeof makeSim>) => s.engine.s;
 
@@ -283,6 +283,206 @@ describe('restart safety inside collection', () => {
     expect(s2.verify.accepted).toEqual(['AC-1']);
   });
 });
+
+describe('crash boundaries found at MIDPOINT re-review', () => {
+  const fail = [{ match: { step: 'acceptance' }, behaviour: 'reviewer_fail', times: 1 }] as any[];
+  it('a crash after classifying an acceptance FAIL still repairs once', async () => {
+    const plain = makeSim({ script: fail });
+    await runSim(plain);
+    expect(plain.engine.s.integrated_repairs).toBe(1);
+    for (const point of ['after:review.collected']) {
+      const { sim, exit } = await crashThenResume(point, fail);
+      expect(exit.state).toBe(plain.engine.s.state);
+      expect(sim.engine.s.integrated_repairs, point).toBe(1);
+    }
+    const count = ofType(plain, 'dispatch.classified').length;
+    for (let n = 1; n <= count; n += 3) {
+      const { sim, exit } = await crashThenResume(`after:dispatch.classified#${n}`, fail);
+      expect(exit.state, `#${n}`).toBe('MOCK_RUN_COMPLETE');
+      expect(sim.engine.s.integrated_repairs, `#${n}`).toBe(1);
+    }
+  });
+  it('a crash after the owner decision completes it on resume', async () => {
+    const sim = makeSim({
+      script: [{ match: { task: 'T1', step: 'work' }, behaviour: 'write_secret', times: 1 }],
+    });
+    expect((await runSim(sim)).state).toBe('ESCALATION_REQUIRED');
+    const id = sim.engine.s.open_escalation as string;
+    let armed = true;
+    sim.failFn = (n) => {
+      if (armed && n === 'after:operator.decision') {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    await expect(resumeSim(sim, { decision: decision(id, 'retry_task') })).rejects.toBeInstanceOf(
+      SimulatedKill,
+    );
+    sim.failFn = () => {};
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('MOCK_RUN_COMPLETE');
+    expect(ofType(sim, 'operator.decision').length).toBe(1);
+  });
+  it('cancel sweeps an attempt left from before a crash', async () => {
+    const { sim } = await crashAfter('after:dispatch.finished#1');
+    const scanned: string[] = [];
+    sim.ports.scanner = {
+      scan: async (a) => {
+        scanned.push(a.attempt_id);
+        return [];
+      },
+      isAlive: async () => false,
+    };
+    sim.control = { request: 'cancel' };
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('CANCELLED');
+    expect(scanned.length).toBeGreaterThan(0);
+    for (const a of Object.values(sim.engine.s.attempts))
+      expect(a.swept || a.fenced, a.attempt_id).toBe(true);
+  });
+  it('H-SPEC holds on a finished attempt collected after a crash', async () => {
+    const { sim } = await crashAfter('after:dispatch.finished#2');
+    sim.store.write('spec.lock', JSON.stringify({ sha256: 'tampered' }));
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('FAILED');
+    expect(ofType(sim, 'invariant.violation')[0].data.message).toContain('H-SPEC');
+  });
+  it('a modified review checkout is rejected even if the crash fell after its check', async () => {
+    const script: any[] = [
+      { match: { task: 'T1', step: 'review' }, behaviour: 'reviewer_modifies_tree', times: 1 },
+    ];
+    const { sim, exit } = await crashThenResume('after:tree.identity_checked#1', script);
+    expect(exit.state).toBe('MOCK_RUN_COMPLETE');
+    expect(ofType(sim, 'worker.quarantined').length).toBe(1);
+  });
+  it('a checkout that vanished with no recorded check discards the output', async () => {
+    const sim = makeSim();
+    let armed = true;
+    sim.failFn = (n) => {
+      if (armed && n === 'after:dispatch.finished#1') {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const open = Object.values(sim.engine.s.attempts).find(
+      (a) => a.finished && a.class === null && a.mode === 'read_only',
+    );
+    expect(open).toBeTruthy();
+    await sim.git.removeWorktree((open as any).cwd);
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('MOCK_RUN_COMPLETE');
+    expect(ofType(sim, 'attempt.result_fenced').length).toBeGreaterThan(0);
+  });
+  it('a re-attached relay past its deadline goes down the kill path', async () => {
+    const script: any[] = [
+      {
+        match: { task: 'T1', step: 'work' },
+        behaviour: 'ok',
+        delay_ms: 10_000_000,
+        survives_coordinator: true,
+        times: 1,
+      },
+    ];
+    const sim = makeSim({ script });
+    let armed = true;
+    sim.failFn = (n) => {
+      if (armed && n === 'after:dispatch.started#2') {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const a = Object.values(sim.engine.s.attempts).find(
+      (x) => x.step === 'work' && !x.finished,
+    ) as any;
+    const signals: string[] = [];
+    let alive = true;
+    sim.ports.scanner = {
+      scan: async () =>
+        alive
+          ? [{ pid: a.pid, start_time: a.start_time, argv: `relay ${a.out_dir}`, cwd: null }]
+          : [],
+      isAlive: async () => alive,
+    };
+    sim.ports.killer = {
+      kill: async (_p, sig) => {
+        signals.push(sig);
+        alive = false;
+      },
+      sleep: async () => {},
+    };
+    sim.clock.advance(a.timeout_s * 1000 + 120_000);
+    const exit = await resumeSim(sim);
+    expect(signals).toEqual(['SIGTERM']);
+    expect(exit.state).toBe('MOCK_RUN_COMPLETE');
+  });
+  it('a relay proven live is re-attached with no signal, then killed if it passes its deadline', async () => {
+    const script: any[] = [
+      {
+        match: { task: 'T1', step: 'work' },
+        behaviour: 'ok',
+        delay_ms: 100_000_000,
+        survives_coordinator: true,
+        times: 1,
+      },
+    ];
+    const sim = makeSim({ script });
+    let armed = true;
+    sim.failFn = (n) => {
+      if (armed && n === 'after:dispatch.started#2') {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const a = Object.values(sim.engine.s.attempts).find(
+      (x) => x.step === 'work' && !x.finished,
+    ) as any;
+    let alive = true;
+    const signals: string[] = [];
+    sim.ports.scanner = {
+      scan: async () =>
+        alive
+          ? [{ pid: a.pid, start_time: a.start_time, argv: `relay ${a.out_dir}`, cwd: null }]
+          : [],
+      isAlive: async () => alive,
+    };
+    sim.ports.killer = {
+      kill: async (_p, sig) => {
+        signals.push(sig);
+        alive = false;
+      },
+      sleep: async () => {},
+    };
+    const exit = await resumeSim(sim);
+    const cancels = ofType(sim, 'cancel.sent').filter((e) => e.data.reason === 'deadline');
+    expect(cancels.length).toBe(1);
+    expect(signals).toEqual(['SIGTERM']);
+    expect(exit.state).toBe('MOCK_RUN_COMPLETE');
+  });
+});
+
+async function crashAfter(point: string, script: any[] = []) {
+  const sim = makeSim({ script });
+  let armed = true;
+  sim.failFn = (n) => {
+    if (armed && n === point) {
+      armed = false;
+      throw new SimulatedKill(point);
+    }
+  };
+  sim.engine.createRun();
+  await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+  sim.failFn = () => {};
+  return { sim };
+}
 
 describe('cleanup after a worker exits', () => {
   it('scans, kills and confirms before a family is released', async () => {
