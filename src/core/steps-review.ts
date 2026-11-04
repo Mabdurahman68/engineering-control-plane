@@ -43,18 +43,19 @@ export function failReadStep(
   statedReset: number | null = null,
 ) {
   const key = `${a.step}:${a.rung}:${cls}`;
-  const plan = e.planFailure(cls, a, retriesFor(e, t, key), statedReset);
-  if (!a.class)
-    e.append('dispatch.classified', a.task_id, { attempt_id: a.attempt_id, class: cls });
-  e.decide(
-    'DP-FALLBACK',
-    t,
-    plan.retry_same ? 'retry_same_rung' : 'next_rung',
-    a.rung,
-    t?.state ?? e.s.state,
-    t?.state ?? e.s.state,
-  );
-  e.applyFailurePlan(a, cls, plan, key, null);
+  if (!e.s.attempts[a.attempt_id].fallback_applied) {
+    const plan = e.planFailure(cls, a, retriesFor(e, t, key), statedReset);
+    e.decide(
+      'DP-FALLBACK',
+      t,
+      plan.retry_same ? 'retry_same_rung' : 'next_rung',
+      a.rung,
+      t?.state ?? e.s.state,
+      t?.state ?? e.s.state,
+    );
+    e.applyFailurePlan(a, cls, plan, key, null);
+  }
+  e.append('dispatch.classified', a.task_id, { attempt_id: a.attempt_id, class: cls });
 }
 
 // The identity result goes on the ledger before the checkout does, so a crash can't lose it.
@@ -91,10 +92,10 @@ export async function awaitReadStep(
 ): Promise<StepOutcome> {
   let raw = a.finished ? e.loadRaw(a) : e.outcomeOf(a.attempt_id);
   if (!raw) return { kind: 'wait' };
-  e.checkSpecLock();
   if (!a.finished) e.recordFinish(a, raw);
   raw = raw as RawOutcome;
   await sweepAttempt(e, a);
+  e.checkSpecLock();
   if (a.mode !== 'read_only') return { kind: 'ok', raw };
   const unchanged = await endReadCheckout(e, a);
   if (unchanged === null) {
@@ -110,26 +111,29 @@ export async function awaitReadStep(
     return { kind: 'failed' };
   }
   if (!unchanged) {
+    if (!e.s.attempts[a.attempt_id].fallback_applied) {
+      e.append('worker.quarantined', a.task_id, {
+        rung: a.rung,
+        until: null,
+        reason: 'checkout tree changed',
+        scope: 'run',
+      });
+      e.append('fallback.taken', a.task_id, {
+        from: a.rung,
+        to: 'none',
+        class: 'UNKNOWN',
+        step: a.step,
+        key: `${a.step}:${a.rung}:TREE_CHANGED`,
+        next_rung: false,
+        not_before: null,
+        skip: `${a.step}:${a.rung}`,
+        attempt_id: a.attempt_id,
+      });
+    }
     e.append('dispatch.classified', a.task_id, {
       attempt_id: a.attempt_id,
       class: 'UNKNOWN',
       tree_changed: true,
-    });
-    e.append('worker.quarantined', a.task_id, {
-      rung: a.rung,
-      until: null,
-      reason: 'checkout tree changed',
-      scope: 'run',
-    });
-    e.append('fallback.taken', a.task_id, {
-      from: a.rung,
-      to: 'none',
-      class: 'UNKNOWN',
-      step: a.step,
-      key: `${a.step}:${a.rung}:TREE_CHANGED`,
-      next_rung: false,
-      not_before: null,
-      skip: `${a.step}:${a.rung}`,
     });
     return { kind: 'failed' };
   }

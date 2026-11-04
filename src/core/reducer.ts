@@ -35,6 +35,8 @@ export type AttemptRec = {
   fenced: boolean;
   swept: boolean;
   tree_ok: boolean | null;
+  // Its failure consequences are on the ledger. Classification comes after, so none can be lost.
+  fallback_applied: boolean;
   slot?: number;
   context?: Record<string, unknown>;
 };
@@ -102,6 +104,9 @@ export type TaskRec = {
   forced_stall: string | null;
   worktree_gen: number;
   note: string | null;
+  // Durable markers, so a crash between an event and its transition can't charge anything twice.
+  repair_requested: boolean;
+  stall_at: number | null;
 };
 
 export type GateRun = {
@@ -363,6 +368,8 @@ export function newTask(taskId: string, spec: TaskRec['spec'], isIntegration: bo
     forced_stall: null,
     worktree_gen: 0,
     note: null,
+    repair_requested: false,
+    stall_at: null,
   };
 }
 
@@ -443,6 +450,12 @@ function apply(s: RunR, ev: LedgerEvent): void {
         throw new InvariantViolation(`illegal task transition ${d.from} --${d.trigger}--> ${d.to}`);
       }
       if (d.from === 'REVIEWING' && t.reviews.length) t.reviews[t.reviews.length - 1].routed = true;
+      if (d.from === 'TASK_DISAGREEMENT') {
+        for (const rec of Object.values<any>(s.disagreements)) {
+          if (rec.subject.task_id === t.task_id && rec.adjudication.status !== 'PENDING')
+            rec.routed = true;
+        }
+      }
       t.state = d.to;
       if (d.next_step) t.next_step = d.next_step;
       if (d.escalation_reason !== undefined) t.escalation_reason = d.escalation_reason;
@@ -541,6 +554,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         fenced: false,
         swept: false,
         tree_ok: null,
+        fallback_applied: false,
         slot: d.slot,
         context: d.context,
       };
@@ -553,6 +567,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         t.rung = d.rung;
         if (!t.tried_rungs.includes(d.rung)) t.tried_rungs.push(d.rung);
         t.keep_diff = false;
+        t.repair_requested = false;
       }
       return;
     }
@@ -704,6 +719,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.switch_rung) t.repair_rung_switches += 1;
       t.repairs += 1;
       s.counters.repairs += 1;
+      t.repair_requested = true;
       return;
     }
     case 'worktree.salvaged': {
@@ -715,10 +731,13 @@ function apply(s: RunR, ev: LedgerEvent): void {
       const t = task(s, ev.task_id);
       t.stalls += 1;
       t.forced_stall = null;
+      t.stall_at = t.attempts;
       return;
     }
     case 'fallback.taken': {
       s.counters.fallbacks += 1;
+      if (d.attempt_id && s.attempts[d.attempt_id])
+        s.attempts[d.attempt_id].fallback_applied = true;
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;
       if (t) {
         const key = (d.key ?? d.from) as string;
@@ -770,6 +789,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
       s.integration.tip = d.tip;
       s.integration.branch = d.branch ?? s.integration.branch;
       s.integration.worktree = d.worktree ?? s.integration.worktree;
+      if (d.int_task && s.tasks[d.int_task]) s.tasks[d.int_task].commit = d.tip;
       if (d.task_id && !s.integration.merged.includes(d.task_id)) {
         s.integration.merged.push(d.task_id);
       }

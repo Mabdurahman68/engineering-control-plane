@@ -553,7 +553,8 @@ export class MockAdapter implements WorkerAdapter {
       last: null,
     };
     this.runs.set(req.attempt_id, run);
-    if (step?.survives_coordinator) this.world.survivors?.set(req.attempt_id, run);
+    // In the in-memory world a fake relay outlives a coordinator crash, as a detached relay does.
+    this.world.survivors?.set(req.attempt_id, run);
 
     if (
       behaviour === 'timeout' ||

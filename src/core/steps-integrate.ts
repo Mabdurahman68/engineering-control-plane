@@ -74,6 +74,11 @@ export function openIntegrationTask(
 export async function completeIntegrationTask(e: Engine, t: TaskRec): Promise<boolean> {
   const snap = lastSnapshot(t);
   if (!snap) throw new InvariantViolation(`${t.task_id} has no snapshot`);
+  if (t.commit) {
+    // Landed before a crash.
+    e.taskTo(t, 'TASK_PASSED', 'review_passed');
+    return true;
+  }
   const tip = tipOf(e);
   const conflictCommit = t.conflict_of ? e.s.tasks[t.conflict_of].commit : null;
   const parents = conflictCommit ? [tip, conflictCommit] : [tip];
@@ -89,6 +94,7 @@ export async function completeIntegrationTask(e: Engine, t: TaskRec): Promise<bo
   e.append('merge.done', t.task_id, {
     tip: commit,
     branch: integrationBranch(e),
+    int_task: t.task_id,
     task_id: t.conflict_of ?? undefined,
     authors: t.retained_families,
   });

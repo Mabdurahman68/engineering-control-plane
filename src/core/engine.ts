@@ -486,7 +486,6 @@ export class Engine {
   // Records the finish, once. After this the attempt's outcome is on disk and survives a crash.
   recordFinish(a: AttemptRec, raw: RawOutcome) {
     const slot = this.inflight.get(a.attempt_id);
-    this.checkSpecLock();
     const wall = slot ? (this.now() - slot.startedMs) / 1000 : 0;
     this.p.store.write(`attempts/${a.attempt_id}/raw.json`, JSON.stringify(raw));
     this.append('dispatch.finished', a.task_id, {
@@ -535,6 +534,7 @@ export class Engine {
     plan: ReturnType<typeof fallbackPlan>,
     key: string,
     nextRung: string | null,
+    keepDiff = false,
   ) {
     if (plan.backoff_until !== null) {
       this.append('backoff.started', a.task_id, {
@@ -559,6 +559,7 @@ export class Engine {
       });
     }
     this.append('fallback.taken', a.task_id, {
+      attempt_id: a.attempt_id,
       from: a.rung,
       to: plan.retry_same ? a.rung : (nextRung ?? 'none'),
       class: cls,
@@ -567,6 +568,7 @@ export class Engine {
       next_rung: !plan.retry_same && nextRung !== null,
       not_before: plan.delay_ms ? this.now() + plan.delay_ms : null,
       skip: plan.retry_same ? null : `${a.step}:${a.rung}`,
+      keep_diff: keepDiff,
     });
   }
 
@@ -813,6 +815,15 @@ export class Engine {
 
   private async step(): Promise<boolean> {
     const s = this.s;
+    // Raised before a crash, and the run hadn't moved yet.
+    if (s.open_escalation && ACTIVE.includes(s.state)) {
+      const rec = s.escalations[s.open_escalation];
+      this.runTo('ESCALATION_REQUIRED', rec.trigger ?? 'task_escalated', {
+        resume_to: s.state,
+        reason: `${rec.reason}: ${rec.summary}`,
+      });
+      return true;
+    }
     if (
       s.pending_request === 'cancel' &&
       ![
@@ -949,6 +960,21 @@ export class Engine {
   }
 
   private raiseTaskEscalation() {
+    // Dependents are blocked first, so the record of the stop doesn't depend on scheduling order.
+    let moved = true;
+    while (moved) {
+      moved = false;
+      for (const x of Object.values(this.s.tasks)) {
+        if (x.state !== 'PENDING') continue;
+        const blocked = x.spec.depends_on.some((d) =>
+          ['TASK_ESCALATED', 'TASK_BLOCKED'].includes(this.s.tasks[d]?.state),
+        );
+        if (blocked) {
+          this.taskTo(x, 'TASK_BLOCKED', 'dep_failed');
+          moved = true;
+        }
+      }
+    }
     const t = Object.values(this.s.tasks).find((x) => x.state === 'TASK_ESCALATED') as TaskRec;
     const raw = t.escalation_reason ?? 'REPAIR_EXHAUSTED';
     const reason = (
@@ -966,6 +992,7 @@ export class Engine {
     trigger: string,
     opts: { synthetic?: boolean } = {},
   ) {
+    if (this.s.open_escalation) return;
     const id = `E-${Object.keys(this.s.escalations).length + 1}`;
     const synthetic = opts.synthetic ?? false;
     const record = {
@@ -976,6 +1003,7 @@ export class Engine {
       summary,
       evidence: [],
       options: optionsFor(reason, t?.task_id ?? null, { synthetic }),
+      trigger,
     };
     this.p.store.write(`escalations/${id}.json`, JSON.stringify(record, null, 2));
     this.decide('DP-ESCALATE', t, 'escalate', reason, this.s.state, 'ESCALATION_REQUIRED');
@@ -1059,10 +1087,14 @@ export class Engine {
   }
 
   private async stopEverything() {
-    try {
-      await this.cancelInflight();
-    } catch {
-      // Already failing. The resume sweep handles anything left.
+    // Already failing. One attempt's failure to stop mustn't leave another's writer unswept.
+    for (let tries = 0; tries < 3; tries++) {
+      try {
+        await this.cancelInflight();
+        return;
+      } catch {
+        // Try again; the failed attempt is recorded, and its sweep throws only if it won't die.
+      }
     }
   }
 
@@ -1229,7 +1261,7 @@ export class Engine {
     }
   }
 
-  private hasWaiver(
+  hasWaiver(
     scope: string,
     r: {
       gate_id?: string | null;

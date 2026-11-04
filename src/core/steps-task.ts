@@ -286,8 +286,8 @@ async function stepCollecting(e: Engine, t: TaskRec): Promise<boolean> {
   }
   const raw = e.loadRaw(a);
   if (!raw) throw new InvariantViolation(`attempt ${a.attempt_id} has no outcome`);
-  e.checkSpecLock();
   await sweepAttempt(e, a);
+  e.checkSpecLock();
   let cls: FailureClass = raw.spawn_failed ? 'UNKNOWN' : e.classifyRaw(a, raw);
   let report: WorkerReport | null = null;
   if (cls === 'OK') {
@@ -388,8 +388,6 @@ function handleWorkerFailure(e: Engine, t: TaskRec, a: AttemptRec, cls: FailureC
     }
   }
   const plan = e.planFailure(cls, a, seen, null);
-  e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: cls });
-  e.releaseIfUnretained(a);
   if (plan.salvage && t.worktree) {
     e.p.store.write(`salvage/${t.task_id}-${a.n}.patch.intent`, a.attempt_id);
     e.append('worktree.salvaged', t.task_id, {
@@ -411,21 +409,10 @@ function handleWorkerFailure(e: Engine, t: TaskRec, a: AttemptRec, cls: FailureC
     'COLLECTING',
     next ? 'DISPATCHING' : 'TASK_WAITING_WORKER',
   );
-  e.applyFailurePlan(a, cls, plan, key, next);
-  if (plan.keep_diff) {
-    // A MALFORMED re-ask on the same rung keeps the diff; anything else resets at dispatch.
-    e.append('fallback.taken', t.task_id, {
-      from: a.rung,
-      to: a.rung,
-      class: cls,
-      step,
-      key: `${key}:keep`,
-      next_rung: false,
-      not_before: null,
-      skip: null,
-      keep_diff: true,
-    });
-  }
+  if (!e.s.attempts[a.attempt_id].fallback_applied)
+    e.applyFailurePlan(a, cls, plan, key, next, plan.keep_diff);
+  e.releaseIfUnretained(a);
+  e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: cls });
   if (next) {
     e.taskTo(t, 'DISPATCHING', cls === 'MALFORMED' ? 'malformed' : 'failure_rung_available', {
       rung: next,
@@ -709,6 +696,19 @@ export function openDisagreement(
     status?: string;
   },
 ) {
+  // A crash can re-run the step that opened this. One record per identity.
+  const existing = (o.keys ?? []).length
+    ? Object.values<any>(e.s.disagreements).find(
+        (x) => x.subject.task_id === t.task_id && JSON.stringify(x.keys) === JSON.stringify(o.keys),
+      )
+    : Object.values<any>(e.s.disagreements).find(
+        (x) =>
+          x.subject.task_id === t.task_id &&
+          x.subject.review_id !== null &&
+          x.subject.review_id === o.review_id &&
+          x.kind === o.kind,
+      );
+  if (existing) return existing.id;
   const id = `D-${Object.keys(e.s.disagreements).length + 1}`;
   const record = {
     schema: 'disagreement.v1',
@@ -761,6 +761,11 @@ async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
   const a = currentAttempt(e.s, t.task_id, ['challenge']);
   const failed = failedSoftGates(t);
   if (!a) {
+    // Filed before a crash, and the task hadn't moved yet.
+    if (pendingDisagreements(e, t).length) {
+      e.taskTo(t, 'TASK_DISAGREEMENT', 'challenge_filed', { next_step: 'adjudicate' });
+      return true;
+    }
     if (e.draining) return false;
     const elements = failed.flatMap((g) => (g.uncovered as string[]).map((el) => `${g.id}|${el}`));
     const open = elements.filter((k) => !t.adjudicated.includes(k));
@@ -819,7 +824,6 @@ async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
     failReadStep(e, t, a, 'MALFORMED');
     return true;
   }
-  e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: 'OK' });
   const fresh = e.s.tasks[t.task_id];
   const contested = parsed.value.challenges.filter(
     (c) =>
@@ -827,6 +831,7 @@ async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
       !fresh.adjudicated.includes(`${c.gate_id}|${c.signature}`),
   );
   if (contested.length === 0) {
+    e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: 'OK' });
     e.decide(
       'DP-DISAGREEMENT',
       fresh,
@@ -852,6 +857,7 @@ async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
       elements: [c.signature],
     });
   }
+  e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: 'OK' });
   e.decide(
     'DP-DISAGREEMENT',
     fresh,
@@ -1125,13 +1131,33 @@ function resetDependents(e: Engine, taskId: string) {
 
 async function stepRepairPending(e: Engine, t: TaskRec): Promise<boolean> {
   if (e.draining) return false;
+  // Requested before a crash: charged once already, so go straight on.
+  if (t.repair_requested) {
+    const switching = t.stall_at === t.attempts && t.stalls > 0;
+    const ladder = ladderOf(e, t);
+    await e.refreshHealth(ladder);
+    const rung = switching
+      ? e.pickWriter(
+          ladder.filter((r) => r !== t.rung),
+          skipListFor(e, t, 'repair'),
+          null,
+        )
+      : null;
+    e.taskTo(t, 'DISPATCHING', switching ? 'repair_next_rung' : 'repair_dispatch', {
+      next_step: 'repair',
+      ...(rung ? { rung } : {}),
+    });
+    return true;
+  }
   const limit = t.repairs >= e.profile().repair_max;
   const signal = t.forced_stall ?? stallSignal(t.stall_history);
   const refs = { fingerprints: (t.open_findings as any[]).map((f) => f.fingerprint) };
   if (signal || limit) {
     const reason = signal ?? 'limit';
-    if (t.stalls >= 1) {
-      e.append('stall.detected', t.task_id, { reason, second: true });
+    // A stall already counted for this attempt, before a crash, isn't a second stall.
+    const counted = t.stall_at === t.attempts;
+    if (t.stalls >= (counted ? 2 : 1)) {
+      if (!counted) e.append('stall.detected', t.task_id, { reason, second: true });
       const fresh = e.s.tasks[t.task_id];
       e.decide(
         'DP-REPAIR',
@@ -1156,7 +1182,7 @@ async function stepRepairPending(e: Engine, t: TaskRec): Promise<boolean> {
       });
       return true;
     }
-    e.append('stall.detected', t.task_id, { reason, second: false });
+    if (!counted) e.append('stall.detected', t.task_id, { reason, second: false });
     const fresh = e.s.tasks[t.task_id];
     const ladder = ladderOf(e, fresh);
     await e.refreshHealth(ladder);
@@ -1263,18 +1289,37 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
   const pending = pendingDisagreements(e, t);
   if (!a) {
     if (pending.length === 0) {
-      const all = Object.values(e.s.disagreements).filter(
-        (d: any) =>
-          (d.subject.task_id === t.task_id && d.kind !== 'MECHANICAL_PASS_SEMANTIC_FAIL') ||
-          (d as any).requested_action === 'OVERRIDE_FINDING',
-      ) as any[];
-      const recent = all.filter((d) => d.subject.task_id === t.task_id).slice(-1);
-      const rejected = recent.some((d) => d.adjudication.status === 'REJECTED');
+      const batch = Object.values<any>(e.s.disagreements).filter(
+        (d) =>
+          d.subject.task_id === t.task_id &&
+          !d.routed &&
+          d.adjudication.status !== 'ROUTED_TO_REPAIR',
+      );
+      // A split or escalated ruling goes to the owner, even if a crash fell before the task moved.
+      if (
+        batch.some(
+          (d) => d.adjudication.status === 'SPLIT' || d.adjudication.status === 'ESCALATED',
+        )
+      ) {
+        e.decide(
+          'DP-ESCALATE',
+          t,
+          'escalate',
+          'UNRESOLVED_DISAGREEMENT',
+          'TASK_DISAGREEMENT',
+          'TASK_ESCALATED',
+        );
+        e.taskTo(t, 'TASK_ESCALATED', 'unresolved', {
+          escalation_reason: 'UNRESOLVED_DISAGREEMENT',
+        });
+        return true;
+      }
+      const rejected = batch.some((d) => d.adjudication.status === 'REJECTED');
       return routeAfterRulings(
         e,
         t,
         rejected,
-        recent.some((d) => d.subject.gate_id),
+        batch.some((d) => d.subject.gate_id),
       );
     }
     const d = pending[0];
@@ -1352,7 +1397,6 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
     failReadStep(e, t, a, 'MALFORMED');
     return true;
   }
-  e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: 'OK' });
   const fresh = e.s.tasks[t.task_id];
   const d = e.s.disagreements[a.context?.disagreement as string];
   const ruling = parsed.value.ruling;
@@ -1363,13 +1407,19 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
     evidence: parsed.value.evidence.map((x) => x.path),
     decided_at: new Date(e.now()).toISOString(),
   });
+  const rule = (status: string) => {
+    if (e.s.disagreements[d.id].adjudication.status === 'PENDING') {
+      e.append('disagreement.adjudicated', t.task_id, {
+        id: d.id,
+        adjudication: adjudication(status),
+        counted: true,
+        keys: d.keys,
+      });
+    }
+    e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: 'OK' });
+  };
   if (ruling === 'SPLIT') {
-    e.append('disagreement.adjudicated', t.task_id, {
-      id: d.id,
-      adjudication: adjudication('SPLIT'),
-      counted: true,
-      keys: d.keys,
-    });
+    rule('SPLIT');
     e.decide(
       'DP-DISAGREEMENT',
       fresh,
@@ -1392,22 +1442,13 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
     return true;
   }
   if (ruling === 'REJECT') {
-    e.append('disagreement.adjudicated', t.task_id, {
-      id: d.id,
-      adjudication: adjudication('REJECTED'),
-      counted: true,
-      keys: d.keys,
-    });
+    rule('REJECTED');
   } else if (ruling === 'WAIVE' && d.subject.gate_id && /^S-/.test(d.subject.gate_id)) {
-    e.append('disagreement.adjudicated', t.task_id, {
-      id: d.id,
-      adjudication: adjudication('WAIVED_WITH_EVIDENCE'),
-      counted: true,
-      keys: d.keys,
-    });
     const snap = lastSnapshot(fresh);
     const tree = snap?.tree ?? '0'.repeat(40);
+    // Waivers first: the ruling only counts once its consequences are on the ledger.
     for (const el of d.elements as string[]) {
+      if (e.hasWaiver(t.task_id, { gate_id: d.subject.gate_id, signature_element: el })) continue;
       e.append('waiver.recorded', t.task_id, {
         waiver: gateWaiver(
           `W-${e.s.waivers.length + 1}`,
@@ -1419,13 +1460,8 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
         ),
       });
     }
+    rule('WAIVED_WITH_EVIDENCE');
   } else if ((ruling === 'OVERRIDE' || ruling === 'WAIVE') && !d.subject.gate_id) {
-    e.append('disagreement.adjudicated', t.task_id, {
-      id: d.id,
-      adjudication: adjudication('WAIVED_WITH_EVIDENCE'),
-      counted: true,
-      keys: d.keys,
-    });
     const snap = lastSnapshot(fresh);
     const reviewId =
       d.subject.review_id ?? fresh.reviews[fresh.reviews.length - 1]?.review_id ?? null;
@@ -1437,14 +1473,10 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
       snap?.tree ?? '0'.repeat(40),
       disputed.length ? disputed : null,
     );
+    rule('WAIVED_WITH_EVIDENCE');
   } else {
     // A ruling that doesn't fit its subject, such as OVERRIDE on a gate, doesn't count as a waiver.
-    e.append('disagreement.adjudicated', t.task_id, {
-      id: d.id,
-      adjudication: adjudication('REJECTED'),
-      counted: true,
-      keys: d.keys,
-    });
+    rule('REJECTED');
   }
   return true;
 }

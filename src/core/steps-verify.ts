@@ -51,16 +51,15 @@ function repairOrExhaust(
     return true;
   }
   e.decide('DP-VERIFY', null, 'repair', null, 'VERIFYING', 'INTEGRATING', refs);
-  // A crash may have fallen after the task opened and before the run moved.
-  const open = Object.values(e.s.tasks).find(
-    (x) => x.is_integration && !['TASK_PASSED', 'TASK_CANCELLED'].includes(x.state),
-  );
-  if (open) {
-    e.runTo('INTEGRATING', 'repairable');
-    return true;
-  }
-  const t = openIntegrationTask(e, entry, o);
-  if (o.split) {
+  // A crash may have fallen after the task opened and before the run moved. Finish, don't repeat.
+  const t =
+    Object.values(e.s.tasks).find(
+      (x) => x.is_integration && !['TASK_PASSED', 'TASK_CANCELLED'].includes(x.state),
+    ) ?? openIntegrationTask(e, entry, o);
+  if (
+    o.split &&
+    !Object.values(e.s.disagreements).some((d: any) => d.subject.task_id === t.task_id)
+  ) {
     openDisagreement(e, t, {
       kind: 'REVIEWER_REVIEWER',
       gate_id: null,
@@ -259,14 +258,10 @@ function slotsFor(e: Engine, stage: string): number {
 }
 
 // Derived from the ledger, so a crash after the review was recorded routes it the same way.
-function routeVerifyFail(
-  e: Engine,
-  reviewId: string,
-  stage: string,
-  rung: string,
-  tree: string,
-): boolean {
+function routeVerifyFail(e: Engine, reviewId: string, stage: string, tree: string): boolean {
   const review = JSON.parse(e.p.store.read(`reviews/${reviewId}.json`) as string);
+  // The reviewer's identity comes from the stored review, never from the moment.
+  const rung: string = review.reviewer.rung_id;
   const refs = { fingerprints: review.findings.map((f: any) => f.fingerprint) };
   if (reportHasOnlyUnverifiableFailures(review, e.coveredAcs())) {
     const ac = review.criteria.find(
@@ -326,7 +321,7 @@ async function stageReview(e: Engine, stage: string): Promise<boolean> {
     });
     if (!reviewed) return true;
     if (reviewed.effective === 'FAIL')
-      return routeVerifyFail(e, reviewed.review.review_id, stage, a.rung, tree);
+      return routeVerifyFail(e, reviewed.review.review_id, stage, tree);
 
     return true;
   }
@@ -491,13 +486,7 @@ export async function stepVerifying(e: Engine): Promise<boolean> {
   const pending = e.s.verify.pending_fail;
   if (pending && !currentAttempt(e.s, null, ['acceptance', 'adversarial', 'lens'])) {
     const v = e.s.verify_review.verdicts.find((x) => x.review_id === pending);
-    return routeVerifyFail(
-      e,
-      pending,
-      v?.stage ?? 'acceptance',
-      'unknown',
-      await e.p.git.treeOf(tipOf(e)),
-    );
+    return routeVerifyFail(e, pending, v?.stage ?? 'acceptance', await e.p.git.treeOf(tipOf(e)));
   }
   const stages = stagesFor(e);
   const next = stages.find((s) => !e.s.verify.passed_stages.includes(s));

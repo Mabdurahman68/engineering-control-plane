@@ -469,6 +469,111 @@ describe('crash boundaries found at MIDPOINT re-review', () => {
   });
 });
 
+describe('crash boundaries found at MIDPOINT re-review 2', () => {
+  const armOn = (sim: ReturnType<typeof makeSim>, when: (name: string) => boolean) => {
+    let armed = true;
+    sim.failFn = (n) => {
+      if (armed && when(n)) {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+  };
+  const twoSlotHigh = (p: any) => {
+    p.profiles.quorum.high = 2;
+    p.workers.ladders.adjudication = ['mock-glm', 'mock-anthropic', 'mock-openai'];
+  };
+  const split: any[] = [
+    { match: { step: 'acceptance', rung: 'mock-anthropic' }, behaviour: 'reviewer_pass', times: 1 },
+    { match: { step: 'acceptance', rung: 'mock-glm' }, behaviour: 'reviewer_fail', times: 1 },
+  ];
+  it('a crash just after a split T-INT opens still records the disagreement', async () => {
+    const sim = makeSim({ script: split, spec: { declared_risk: 'high' }, policy: twoSlotHigh });
+    armOn(sim, () => Boolean(sim.engine.s.tasks['T-INT-1']));
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    await resumeSim(sim);
+    const recs = Object.values(sim.engine.s.disagreements).filter(
+      (d: any) => d.kind === 'REVIEWER_REVIEWER',
+    );
+    expect(recs.length).toBe(1);
+  });
+  it('a crash after classifying a tree-changing reviewer still quarantines it', async () => {
+    const script: any[] = [
+      { match: { task: 'T1', step: 'review' }, behaviour: 'reviewer_modifies_tree', times: 1 },
+    ];
+    const sim = makeSim({ script });
+    armOn(
+      sim,
+      (n) =>
+        n === 'after:dispatch.classified' &&
+        Object.values(sim.engine.s.attempts).some((a) => a.tree_ok === false),
+    );
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('MOCK_RUN_COMPLETE');
+    expect(ofType(sim, 'worker.quarantined').length).toBe(1);
+    const reviews = sim.engine.s.tasks.T1.reviews;
+    expect(reviews.every((r) => r.rung !== 'mock-anthropic')).toBe(true);
+  });
+  it('a crash before routing a split keeps the failing reviewer out of adjudication', async () => {
+    const sim = makeSim({ script: split, spec: { declared_risk: 'high' }, policy: twoSlotHigh });
+    armOn(
+      sim,
+      (n) => n === 'after:dispatch.classified' && Boolean(sim.engine.s.verify.pending_fail),
+    );
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    await resumeSim(sim);
+    const rec: any = Object.values(sim.engine.s.disagreements).find(
+      (d: any) => d.kind === 'REVIEWER_REVIEWER',
+    );
+    expect(rec.filed_by).toBe('mock-glm');
+    expect(rec.adjudication.adjudicator).not.toBe('mock-glm');
+    expect(
+      sim.adapter.log.filter((x) => x.step === 'adjudicate').every((x) => x.rung !== 'mock-glm'),
+    ).toBe(true);
+  });
+  it('a spec-lock failure still sweeps the writer', async () => {
+    const sim = makeSim();
+    let alive = true;
+    const signals: string[] = [];
+    let tampered = false;
+    const orig = sim.store.write.bind(sim.store);
+    sim.store.write = (rel, content) => {
+      if (
+        rel.endsWith('/raw.json') &&
+        sim.engine.s.attempts[rel.split('/')[1]]?.mode === 'write' &&
+        !tampered
+      ) {
+        tampered = true;
+        orig('spec.lock', JSON.stringify({ sha256: 'tampered' }));
+      }
+      orig(rel, content);
+    };
+    sim.ports.scanner = {
+      scan: async () =>
+        alive && tampered ? [{ pid: 9, start_time: null, argv: 'x', cwd: null }] : [],
+      isAlive: async () => alive,
+    };
+    sim.ports.killer = {
+      kill: async (_p, sig) => {
+        signals.push(sig);
+        alive = false;
+      },
+      sleep: async () => {},
+    };
+    const exit = await runSim(sim);
+    expect(exit.state).toBe('FAILED');
+    expect(signals).toEqual(['SIGTERM']);
+    expect(ofType(sim, 'invariant.violation')[0].data.message).toContain('H-SPEC');
+  });
+});
+
 async function crashAfter(point: string, script: any[] = []) {
   const sim = makeSim({ script });
   let armed = true;
