@@ -506,6 +506,20 @@ describe('real git driver', () => {
     writeTree(w, { 'build.txt': 'changed\n' });
     expect(await g.worktreeTree(w)).not.toBe(await g.treeOf(head));
   });
+  it('sees a same-size edit made at once, past any cached stat data', async () => {
+    const r = makeRepo({ 'a.txt': 'one\n' });
+    const g = new RealGit(r.dir);
+    const w = join(tempDir(), 'w');
+    await g.addWorktree(w, null, r.base);
+    for (let i = 0; i < 25; i++) {
+      const text = `${String(i).padStart(3, '0')}\n`;
+      writeTree(w, { 'a.txt': text });
+      const s = await g.snapshot(w, `refs/x/${i}`, r.base, 'm');
+      expect(await g.readFile(s.commit, 'a.txt')).toBe(text);
+      await g.resetWorktree(w, r.base);
+      expect(await g.worktreeTree(w)).toBe(await g.treeOf(r.base));
+    }
+  });
   it('merges clean trees, and reports conflicts with markers', async () => {
     const r = makeRepo({ 'a.txt': 'one\n', 'b.txt': 'two\n' });
     const g = new RealGit(r.dir);

@@ -315,7 +315,9 @@ function signature(sim: ReturnType<typeof makeSim>) {
           `${d.kind}|${d.subject.task_id}|${d.filed_by}|${d.adjudication.status}|${d.adjudication.adjudicator}`,
       )
       .sort(),
+    // An AUTH quarantine clears on any resume, by design: eligibility re-checks it.
     quarantined: Object.entries(s.quarantine)
+      .filter(([, q]: any) => q.reason !== 'AUTH')
       .map(([r, q]: any) => `${r}:${q.reason}`)
       .sort(),
     backoff: Object.fromEntries(Object.entries(s.backoff).map(([r, b]: any) => [r, b.tries])),

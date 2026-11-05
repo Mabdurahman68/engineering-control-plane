@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChangedFile, GitPort, MergeResult } from './port.ts';
@@ -104,12 +104,13 @@ export class RealGit implements GitPort {
   async worktreeTree(path: string) {
     const index = join(tmpdir(), `ecp-index-${randomBytes(8).toString('hex')}`);
     try {
-      // Seed from the worktree's own index, so a tracked file matching .gitignore stays tracked.
-      const own = (
-        await git(['rev-parse', '--path-format=absolute', '--git-path', 'index'], { cwd: path })
-      ).stdout.trim();
-      if (existsSync(own)) copyFileSync(own, index);
       const env = { GIT_INDEX_FILE: index };
+      // Seed with the worktree's tracked paths, so a tracked file matching .gitignore stays tracked.
+      // Paths and blobs only, no cached stat data: every file is hashed, so a same-size edit made in
+      // the same second can't be missed.
+      const tracked = (await git(['ls-files', '--stage', '-z'], { cwd: path })).stdout;
+      if (tracked)
+        await git(['update-index', '-z', '--index-info'], { cwd: path, env, input: tracked });
       await git(['add', '-A', '.'], { cwd: path, env });
       return (await git(['write-tree'], { cwd: path, env })).stdout.trim();
     } finally {
