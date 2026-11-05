@@ -34,4 +34,5 @@ export const REQUIRED_RULES = [
   'AC-I',
   'AC-K',
   'R-REAL-WORKER-GUARD',
+  'R-ONE-COORDINATOR',
 ];

@@ -716,3 +716,18 @@ rules:
         test_name: what the guard accepts accepts the pinned fixtures, and only on an absolute PATH
       - file: test/fake-cli/real-worker-guard.test.ts
         test_name: the real-worker chain holds the constant false in this build
+  - id: R-ONE-COORDINATOR
+    source: PRE-SHIP review, the coordinator lock
+    patch: test/rule-removal/patches/R-ONE-COORDINATOR.patch
+    removes: A process whose start time can't be read counts as dead, so a live owner can be unseated.
+    removed_predicate: "seen === null in liveness returning unknown"
+    touches:
+      - src/cli/lock.ts
+    must_fail:
+      - file: test/unit/cli-lock.test.ts
+        test_name: "ps prints a partial line after the first acquisition returned: no second owner"
+      - file: test/unit/cli-lock.test.ts
+        test_name: "ps prints garbage after the first acquisition returned: no second owner"
+    must_pass:
+      - file: test/unit/cli-lock.test.ts
+        test_name: "a second taker fails while the first is alive"

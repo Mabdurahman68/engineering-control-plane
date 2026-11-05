@@ -1,0 +1,13 @@
+diff --git a/src/cli/lock.ts b/src/cli/lock.ts
+index 72613d0..2b68091 100644
+--- a/src/cli/lock.ts
++++ b/src/cli/lock.ts
+@@ -77,7 +77,7 @@ export function liveness(h: Holder, probes: Probes = REAL): Liveness {
+     if ((err as NodeJS.ErrnoException).code !== 'EPERM') return 'unknown';
+   }
+   const seen = parseStart(probes.start(h.pid));
+-  if (seen === null || h.start === null) return 'unknown';
++  if (seen === null || h.start === null) return false;
+   // A claim from before this format can't be compared, so it can't be called reused.
+   if (Number.isNaN(Date.parse(h.start)) || !h.start.endsWith('Z')) return 'unknown';
+   if (seen === h.start) return true;
