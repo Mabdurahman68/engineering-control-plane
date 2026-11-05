@@ -6,16 +6,5 @@ rules:
     removed_predicate: "none"
     touches: [src/publish/gate.ts]
     must_fail:
-      [
-        {
-          file: test/publish/gates.test.ts,
-          test_name: "a secret in a commit message blocks",
-        },
-      ]
-    must_pass:
-      [
-        {
-          file: test/publish/gates.test.ts,
-          test_name: "passes every gate",
-        },
-      ]
+      [{ file: test/publish/gates.test.ts, test_name: "a secret in a commit message blocks" }]
+    must_pass: [{ file: test/publish/gates.test.ts, test_name: "passes every gate" }]

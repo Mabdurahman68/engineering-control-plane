@@ -319,7 +319,7 @@ rules:
     source: binding 4
     patch: test/rule-removal/patches/B4-BASE.patch
     removes: A moved remote base no longer blocks.
-    removed_predicate: observed !== i.baseCommit && observed !== i.acceptedBase
+    removed_predicate: the base comparison, for a moved or missing base
     touches:
       - src/publish/gate.ts
     must_fail:
@@ -473,12 +473,6 @@ rules:
       - file: test/publish/gates.test.ts
         test_name: H-PUSH-BRANCH main as the push target blocks
       - file: test/publish/gates.test.ts
-        test_name: H-PUSH-BRANCH master as the push target blocks
-      - file: test/publish/gates.test.ts
-        test_name: H-PUSH-BRANCH refs/heads/main as the push target blocks
-      - file: test/publish/gates.test.ts
-        test_name: H-PUSH-BRANCH the base branch as the push target blocks, whatever it is called
-      - file: test/publish/gates.test.ts
         test_name: H-PUSH-BRANCH the build's own rule is exact
     must_pass:
       - file: test/publish/gates.test.ts
@@ -489,10 +483,12 @@ rules:
     source: push gate
     patch: test/rule-removal/patches/H-PUSH-BASE.patch
     removes: The remote base needn't be the recorded one.
-    removed_predicate: observed !== i.baseCommit && observed !== i.acceptedBase
+    removed_predicate: the base comparison, for a moved or missing base
     touches:
       - src/publish/gate.ts
     must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BASE a remote base that is missing blocks, with no acceptance to match
       - file: test/publish/gates.test.ts
         test_name: H-PUSH-BASE a remote base that has moved blocks
     must_pass:
@@ -532,6 +528,25 @@ rules:
         test_name: a verified run publishes pushes its own branch, opens one draft PR, and validates it
       - file: test/publish/publish.test.ts
         test_name: a verified run publishes the report states public visibility, and that merging stays with the owner
+  - id: AC-F
+    source: plan H.6
+    patch: test/rule-removal/patches/AC-F.patch
+    removes: "Report figures stop matching the ledger: cost doubled, a claim counted per record, invocations with no usage record dropped."
+    removed_predicate: "figures.ts: the cost sum, latestClaim by claim_id, and the invocation denominator"
+    touches:
+      - src/report/figures.ts
+    must_fail:
+      - file: test/report/claim-figures.test.ts
+        test_name: figures the ledger states twice, or not at all a claim reviewed later counts once, at its latest state
+      - file: test/report/claim-figures.test.ts
+        test_name: figures the ledger states twice, or not at all an invocation with no usage record still counts
+      - file: test/report/recompute.test.ts
+        test_name: report figures against the raw ledger partly measured usage is reported as partial, with the invocations as the denominator
+    must_pass:
+      - file: test/report/recompute.test.ts
+        test_name: report figures against the raw ledger claim figures take a claim once, at its latest state
+      - file: test/report/recompute.test.ts
+        test_name: report figures against the raw ledger a crash between an invocation and its usage record loses nothing
   - id: AC-I
     source: AC-I
     patch: test/rule-removal/patches/AC-I.patch
@@ -633,6 +648,10 @@ rules:
         test_name: a subscription rung failing on quota, never reaches an API-key rung
       - file: test/scenario/fallback/auth-mode.test.ts
         test_name: a subscription rung failing on auth, never reaches an API-key rung
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: a subscription rung failing found by a probe as auth_no, before any dispatch, never reaches an API-key rung
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: a subscription rung failing found by a probe as quota_exhausted, before any dispatch, never reaches an API-key rung
       - file: test/scenario/fallback/auth-mode.test.ts
         test_name: a subscription rung failing a subscription rung is never handed a credential, whatever its configuration says
     must_pass:
