@@ -1,0 +1,21 @@
+--- a/src/pay.mjs
++++ b/src/pay.mjs
+@@ -10,3 +10,3 @@ refund
+-  if (amount <= balance) return pay(amount);
++  if (amount <= balance + 1) return pay(amount);
+@@ -20,2 +20,2 @@ log
+-  log.info('paid', id);
++  log.info('payment complete', id);
+--- a/src/session.mjs
++++ b/src/session.mjs
+@@ -5,2 +5,2 @@ expiry
+-  return now > session.expires;
++  return now < session.expires;
+@@ -30,3 +30,3 @@ rename
+-  const usr = load(id);
++  const user = load(id);
+--- a/src/store.mjs
++++ b/src/store.mjs
+@@ -8,3 +8,3 @@ query
+-  db.query('SELECT * FROM t WHERE id = ?', [id]);
++  db.query(`SELECT * FROM t WHERE id = ${id}`);

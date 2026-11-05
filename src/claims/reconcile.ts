@@ -4,7 +4,7 @@ import type { ChangedFile, GitPort } from '../worktree/port.ts';
 
 const HAS_NUMBER = /\d/;
 
-async function verifyWith(
+export async function verifyWith(
   claim: {
     type: string;
     value?: unknown;
@@ -61,7 +61,7 @@ async function verifyWith(
   }
 }
 
-const same = (a: unknown, b: unknown) =>
+export const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b) || String(a) === String(b);
 
 // Contracts §4. Code computes; a model's claim about its own work is only a claim.

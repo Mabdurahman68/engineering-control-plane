@@ -10,6 +10,8 @@
       "!README.md",
       "!!vendor",
       "!!eval/fixtures",
+      "!!eval/hidden",
+      "!!test/eval/solutions",
       "!!test/fake-cli/bin",
       "!pnpm-lock.yaml"
     ]

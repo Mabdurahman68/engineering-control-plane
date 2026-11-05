@@ -15,5 +15,5 @@
     "resolveJsonModule": true
   },
   "include": ["src", "test", "scripts", "vitest.config.ts"],
-  "exclude": ["test/fake-cli/bin", "eval/fixtures", "node_modules"]
+  "exclude": ["test/fake-cli/bin", "eval/fixtures", "test/eval/solutions", "node_modules"]
 }
