@@ -51,15 +51,16 @@ async function cmdRun(args: string[]) {
   const runId = values['run-id'] ?? `${spec.spec_id}-${stamp}Z`;
   if (existsSync(join(runDir(runId), 'ledger', 'events.jsonl')))
     fail(`run ${runId} already exists; use ecp resume`);
-  if (!takeLock(globalLock())) fail('another run is active: one active run at a time');
   const mockScript = values['mock-script'] ? loadMockScript(values['mock-script']) : null;
   if (!mockScript) {
     // Anything that isn't a pinned fixture is a real CLI, and this is the plain place to say so.
     const auth = authoriseClis(repoRoot(), process.env.PATH ?? '');
-    if (!auth.allowed) {
-      releaseLock(globalLock());
-      fail(`refused: ${auth.reason}`, 3);
-    }
+    if (!auth.allowed) fail(`refused: ${auth.reason}`, 3);
+  }
+  if (!takeLock(globalLock())) {
+    fail(
+      'another run is active, or this machine could not say otherwise: one active run at a time',
+    );
   }
   const w = wire({ runId, spec, policyDir: values.policy, mockScript });
   w.store.write('spec.yaml', readFileSync(specPath, 'utf8'));

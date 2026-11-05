@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LedgerEvent } from '../../../src/contracts/index.ts';
 import { assertNotForbidden } from '../../support/assert.ts';
-import { fuzzRun } from '../../support/fuzz-run.ts';
+import { ANY_STEP, fuzzRun } from '../../support/fuzz-run.ts';
 import { events, makeSim, runSim } from '../../support/harness.ts';
 
 const RULE = 'AC-I';
@@ -17,6 +17,8 @@ const BEHAVIOURS = [
   'shadow_slow',
   'shadow_crash',
   'shadow_predict',
+  // Anything that can happen to any agent step can happen here too, and must change nothing either.
+  ...ANY_STEP,
 ];
 
 // The steering record: everything but shadow events, envelope fields and timestamps.
@@ -95,6 +97,10 @@ describe.each(Object.keys(SCENARIOS))('logical steering invariance: %s', (name) 
       ],
     });
     await runSim(withShadow);
+    // It really ran: a behaviour on a step never dispatched would prove nothing.
+    expect(
+      withShadow.adapter.log.some((l) => l.step === 'shadow' && l.behaviour === behaviour),
+    ).toBe(true);
     const a = steering(events(absent));
     const b = steering(events(withShadow));
     assertNotForbidden(RULE, JSON.stringify(a) !== JSON.stringify(b), firstDiff(a, b));

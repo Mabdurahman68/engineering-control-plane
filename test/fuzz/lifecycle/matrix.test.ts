@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ANY_STEP, STEP } from '../../support/fuzz-run.ts';
 
 describe('the hole test drives what AC-B names', () => {
-  it('reaches every agent step', () => {
+  it('names every agent step but the shadow, whose behaviours its own suite drives', () => {
     expect(Object.keys(STEP).sort()).toEqual(
       [
         'acceptance',

@@ -112,3 +112,21 @@ The coordinator's side of the helper is built and tested against a fake, as the 
 A symlink from elsewhere into the fixture directory is refused too, even though it resolves to a pinned file: its launcher would run whatever core sits beside the link. A `PATH` with an empty or relative entry before the match is refused, since the first match can't be known from another directory.
 
 **Residual limit:** the launchers call `node` by name, so a `node` earlier on `PATH` would run instead of the pinned one. The guard doesn't check it. No untrusted actor runs on this machine in this build.
+
+## The coordinator lock
+
+A directory of numbered claims. The owner is the highest claim whose process is alive. A takeover claims the next number with a link, which either creates it or fails, and a claimant that then isn't highest gives up. Nobody removes or replaces a claim that could be someone's, so no age check is involved. The argument is in `src/cli/lock.ts`.
+
+Liveness has three answers. Only `ps` saying there's no such process means dead: if it can't run, nothing is known, and an owner isn't unseated. So a machine where `ps` is broken refuses to start a run, rather than risk two.
+
+## Evidence for a semantic claim
+
+`claims_reviewed` has no evidence field, and contracts §5 fixes its shape. A PASS on a `FACT`, `BEHAVIOUR` or `ARCHITECTURE` claim needs a reference inside `reason`: a path, a path and line, or a 40-hex ID. Code checks the form and not the truth, which stays with the independent reviewer.
+
+## How AC-A was shown
+
+`pnpm check` under `env -i`, an empty HOME and `sandbox-exec` denying IP. macOS won't exec setuid `ps` in a sandbox, so for that run a shim asks a helper outside it to run `/bin/ps`, and nothing else. The shim and helper aren't in the repository. `ECP_TEST_PATH_PREFIX` exists for them.
+
+## What the hole test asserts ran
+
+AC-B says every behaviour at every step. The hole test records what actually ran, and at 5,000 runs or more fails on any pair that didn't. Shadow behaviours, including every failure any step can have, are asserted to run by the invariance suite. Challenge, adjudication and the conflict resolver need a set-up run, so the fuzz stages those.

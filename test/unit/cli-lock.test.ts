@@ -61,6 +61,44 @@ describe('the coordinator lock', () => {
   });
 });
 
+describe('when a process cannot be inspected', () => {
+  it('an owner already running is not unseated', () => {
+    const lock = fresh();
+    expect(takeLock(lock, { me: A, alive: () => false })).toBe(true);
+    // Inspection fails after the first acquisition returned.
+    const bWon = takeLock(lock, { me: B, alive: () => 'unknown' });
+    assertNotForbidden(RULE, bWon, 'an inspection failure made a second owner');
+    expect(lockHolder(lock)?.pid).toBe(A.pid);
+    expect(coordinatorAlive(lock, () => 'unknown')).toBe(true);
+  });
+  it('no claim is published without a start time', () => {
+    const lock = fresh();
+    assertNotForbidden(
+      RULE,
+      takeLock(lock, { me: { pid: 7, start: null } }),
+      'an unverifiable claim',
+    );
+    expect(lockHolder(lock)).toBeNull();
+  });
+  it('ps failing for real, not by lookup, leaves the owner in place', () => {
+    const lock = fresh();
+    expect(takeLock(lock)).toBe(true);
+    const path = process.env.PATH;
+    process.env.PATH = '/nonexistent';
+    try {
+      assertNotForbidden(RULE, takeLock(lock), 'no ps made a second owner');
+      expect(coordinatorAlive(lock)).toBe(true);
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+  it('a process ps says is gone really is taken over', () => {
+    const lock = fresh();
+    stale(lock);
+    expect(takeLock(lock)).toBe(true);
+  });
+});
+
 describe('claimants stopped between their steps', () => {
   it('both read a stale claim: the link has one winner', () => {
     const lock = fresh();

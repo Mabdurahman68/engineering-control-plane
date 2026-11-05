@@ -22,14 +22,27 @@ import { join } from 'node:path';
 
 export type Holder = { pid: number; start: string | null };
 
-export function procStart(pid: number): string | null {
+// Three answers, not two. Only `ps` saying there's no such process means dead: if it couldn't run, or
+// failed some other way, nothing is known, and an owner mustn't be unseated on that.
+type Started = { known: true; start: string | null } | { known: false };
+
+function inspect(pid: number): Started {
   try {
-    return (
-      execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim() || null
-    );
-  } catch {
-    return null;
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return { known: true, start: out.trim() || null };
+  } catch (err) {
+    return (err as { status?: number }).status === 1
+      ? { known: true, start: null }
+      : { known: false };
   }
+}
+
+export function procStart(pid: number): string | null {
+  const r = inspect(pid);
+  return r.known ? r.start : null;
 }
 
 function claims(dir: string): number[] {
@@ -49,9 +62,12 @@ function readClaim(dir: string, n: number): Holder | null {
   }
 }
 
-function isAlive(h: Holder): boolean {
-  const start = procStart(h.pid);
-  return start !== null && start === h.start;
+export type Liveness = boolean | 'unknown';
+
+function isAlive(h: Holder): Liveness {
+  const r = inspect(h.pid);
+  if (!r.known) return 'unknown';
+  return r.start !== null && r.start === h.start;
 }
 
 export function lockHolder(dir: string): Holder | null {
@@ -59,9 +75,10 @@ export function lockHolder(dir: string): Holder | null {
   return highest === undefined ? null : readClaim(dir, highest);
 }
 
-export function coordinatorAlive(dir: string, alive: (h: Holder) => boolean = isAlive): boolean {
+// An owner that can't be ruled out counts as alive.
+export function coordinatorAlive(dir: string, alive: (h: Holder) => Liveness = isAlive): boolean {
   const h = lockHolder(dir);
-  return h !== null && alive(h);
+  return h !== null && alive(h) !== false;
 }
 
 // The hooks exist so a test can stop a claimant between its steps, and run another in that gap.
@@ -69,18 +86,20 @@ export function takeLock(
   dir: string,
   o: {
     me?: Holder;
-    alive?: (h: Holder) => boolean;
+    alive?: (h: Holder) => Liveness;
     afterRead?: () => void;
     afterLink?: () => void;
   } = {},
 ): boolean {
   const alive = o.alive ?? isAlive;
   const me = o.me ?? { pid: process.pid, start: procStart(process.pid) };
+  // A claim with no start time could never be told from a reused PID. Better no claim.
+  if (me.start === null) return false;
   mkdirSync(dir, { recursive: true });
   // One reading for both questions: judging one claim and numbering past another would jump a live owner.
   const highest = claims(dir).at(-1) ?? 0;
   const holder = highest ? readClaim(dir, highest) : null;
-  if (holder && alive(holder)) return false;
+  if (holder && alive(holder) !== false) return false;
   const next = highest + 1;
   o.afterRead?.();
   const tmp = join(dir, `tmp-${me.pid}-${next}`);

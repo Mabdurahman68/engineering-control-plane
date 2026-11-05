@@ -139,6 +139,15 @@ export const STEP: Record<string, string[]> = Object.fromEntries(
     [...own, ...ANY_STEP.filter((b) => !own.includes(b))],
   ]),
 );
+// Only a merge conflict reaches these, at the T-INT task's work step.
+const RESOLVER = ['resolver_ok', 'resolver_fail'];
+
+// Every behaviour that has meaning at a step, as step|behaviour. The hole test asserts these ran.
+export function requiredPairs(): string[] {
+  const pairs = Object.entries(STEP).flatMap(([step, list]) => list.map((b) => `${step}|${b}`));
+  return [...new Set([...pairs, ...RESOLVER.map((b) => `work|${b}`)])].sort();
+}
+
 const RULINGS = ['waive', 'override', 'reject', 'split'];
 const DEPTHS = ['QUICK', 'STANDARD', 'DEEP', 'EXHAUSTIVE'] as const;
 const RISKS = ['low', 'medium', 'high', 'critical'] as const;
@@ -207,18 +216,110 @@ export async function fuzzRun(seed: number, opts: FuzzOptions = {}): Promise<Fuz
     if (r() < 0.1) entry.delay_ms = Math.floor(r() * 120_000);
     script.push(entry);
   }
+  // Most steps get reached on their own. These need a run set up to reach them: a soft gate that fails
+  // for challenge and adjudication, and a conflicting merge for the resolver.
+  const scene = pick(['plain', 'plain', 'plain', 'challenge', 'adjudicate', 'conflict'] as const);
+  const soft = scene === 'challenge' || scene === 'adjudicate';
+  const times = () => 1 + Math.floor(r() * 3);
+  if (soft) {
+    const staged: any[] = [
+      {
+        match: { task: 'T1', step: 'work' },
+        behaviour: 'ok',
+        edits: [
+          { path: 'src/a.txt', content: 'a\n' },
+          { path: '.sim/fail/full', content: 'Error: regression\n' },
+        ],
+        times: 1,
+      },
+      scene === 'challenge'
+        ? {
+            match: { task: 'T1', step: 'challenge' },
+            behaviour: pick(STEP.challenge),
+            times: times(),
+          }
+        : { match: { task: 'T1', step: 'challenge' }, behaviour: 'challenge_file', times: 1 },
+      ...(scene === 'adjudicate'
+        ? [
+            {
+              match: { task: 'T1', step: 'adjudicate' },
+              behaviour: pick(STEP.adjudicate),
+              args: { ruling: pick(RULINGS) },
+              times: times(),
+            },
+          ]
+        : []),
+      {
+        match: { task: 'T1', step: 'repair' },
+        behaviour: 'ok',
+        edits: [
+          { path: 'src/a.txt', content: 'b\n' },
+          { path: '.sim/fail/full', content: null },
+        ],
+        times: 3,
+      },
+    ];
+    script.unshift(...staged);
+  }
+  if (scene === 'conflict') {
+    script.unshift({
+      match: { task: 'T-INT-1', step: 'work' },
+      behaviour: pick(RESOLVER),
+      edits: [{ path: 'src/t2/c.txt', content: 'resolved\n' }],
+      times: 1,
+    });
+  }
   if (opts.shadow && opts.shadow !== 'absent')
     script.unshift({ match: { step: 'shadow' }, behaviour: opts.shadow });
   const probes: any = {};
   if (r() < 0.15) probes[pick(['mock-openai', 'mock-anthropic', 'mock-glm'])] = pick(PROBES);
-  const depth = pick(DEPTHS);
+  const picked = pick(DEPTHS);
+  const depth = soft && picked === 'QUICK' ? 'DEEP' : picked;
   const sim = makeSim({
+    files: { 'README.md': 'x\n', 'test/a.test.ts': 'test\n' },
+    prep: (s: any) => {
+      if (scene !== 'conflict') return;
+      const merge = s.git.mergeTrees.bind(s.git);
+      s.git.mergeTrees = (a: string, b: string) => {
+        const st = s.engine.s;
+        if (st.tasks.T2?.commit === b && !st.integration.merged.includes('T2')) {
+          s.git.conflictOn = 'src/t2/c.txt';
+        }
+        return merge(a, b);
+      };
+    },
     script,
     probes,
     shadow: Boolean(opts.shadow && opts.shadow !== 'absent'),
     spec: { requested_depth: depth, declared_risk: pick(RISKS) },
-    plan:
-      depth === 'QUICK'
+    plan: soft
+      ? ({
+          tasks: [
+            {
+              task_id: 'T1',
+              goal: 'g',
+              lane: 'implementation',
+              allowed_paths: ['**'],
+              forbidden_paths: [],
+              acceptance_criteria: ['AC-1'],
+              required_tests: [],
+              depends_on: [],
+            },
+            {
+              task_id: 'T2',
+              goal: 'g',
+              lane: 'implementation',
+              allowed_paths: ['other/**'],
+              forbidden_paths: [],
+              acceptance_criteria: [],
+              required_tests: [],
+              depends_on: ['T1'],
+            },
+          ],
+          proposed_risk: 'low',
+          spec_defects: [],
+        } as any)
+      : depth === 'QUICK'
         ? ({
             tasks: [
               {
