@@ -1,0 +1,13 @@
+{
+  "repo": "amElnagdy/delegate-skills",
+  "commit": "3aa72d681a79e2a9d09bd9a316353003ae1cb4a7",
+  "license": "MIT",
+  "enabled": ["codex-delegate", "claude-delegate", "opencode-delegate"],
+  "files": {
+    "codex-delegate/relay.mjs": "d857cfccf408e12d86b4a969c8c4544294919fe253a0096820ed9ed4d24fab5c",
+    "claude-delegate/relay.mjs": "c7283e9765df0771601b2774433858f98e5db18c65d2eb505105c9d2037e89fe",
+    "opencode-delegate/relay.mjs": "86c9b3b0e47a661a5df1760fc235f01985d7bc1923eab0f966e61fd2f590590b",
+    "commandcode-delegate/relay.mjs": "69aec335009dff1f6a7821cd232d49c4c3276983a83e9012df0f6381885599c4",
+    "grok-delegate/relay.mjs": "452f1cd37234345bce2b101a941ddf5d53b6dc263cd6ecba12f4e4d2d2f6d46f"
+  }
+}

@@ -150,6 +150,7 @@ export function wire(o: {
     adapters.mock = mock;
   } else Object.assign(adapters, makeRelayAdapters({ policy, repoRoot: root, home }));
   const failpoint = process.env.ECP_FAILPOINT;
+  let failpointHits = 0;
   const control = join(dir, 'control', 'request.json');
   const engineRef: { current: Engine | null } = { current: null };
   const ports: EnginePorts = {
@@ -170,8 +171,13 @@ export function wire(o: {
       worktree: (run, task, gen) => join(home, 'worktrees', run, `${task}-g${gen}`),
       checkout: (run, name) => join(home, 'worktrees', run, `co-${name}`),
     },
+    // NAME or NAME@n, for the nth time that point is reached.
     failpoint: (name) => {
-      if (failpoint && name === failpoint) process.kill(process.pid, 'SIGKILL');
+      if (!failpoint) return;
+      const [point, nth] = failpoint.split('@');
+      if (name !== point) return;
+      failpointHits++;
+      if (failpointHits === Number(nth ?? 1)) process.kill(process.pid, 'SIGKILL');
     },
     readControl: () => {
       if (!existsSync(control)) return null;
@@ -211,7 +217,7 @@ export function wire(o: {
       mkdirSync(d, { recursive: true });
       return d;
     },
-    transport: mock ? 'mock' : 'real',
+    transport: mock ? 'mock' : 'fake_cli',
   });
   if (mock) {
     mock.shadowOracle = (attemptId) => {

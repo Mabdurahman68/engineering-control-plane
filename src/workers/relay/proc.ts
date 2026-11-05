@@ -21,7 +21,8 @@ export class RealScanner implements ProcScanner {
       if (!m) continue;
       const pid = Number(m[1]);
       if (pid === me) continue;
-      if (m[3].includes(a.out_dir)) found.push({ pid, start_time: m[2], argv: m[3], cwd: null });
+      if (m[3].includes(a.out_dir))
+        found.push({ pid, start_time: m[2].replace(/\s+/g, ' '), argv: m[3], cwd: null });
     }
     // A child usually keeps the worktree as its working directory, without the attempt in its argv.
     const cwdHits = await run('lsof', ['-a', '-d', 'cwd', '-Fpn', '+D', a.cwd]);

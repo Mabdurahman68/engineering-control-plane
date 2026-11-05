@@ -15,8 +15,12 @@ export async function killAttempt(e: Engine, a: AttemptRec): Promise<number> {
       found.map((x) => x.pid),
       'SIGTERM',
     );
-    await killer.sleep(10_000);
-    const remaining = await scanner.scan(ref(a));
+    // Up to ten seconds' grace, and no longer than it takes.
+    let remaining = found;
+    for (let i = 0; i < 10 && remaining.length > 0; i++) {
+      await killer.sleep(1000);
+      remaining = await scanner.scan(ref(a));
+    }
     if (remaining.length > 0)
       await killer.kill(
         remaining.map((x) => x.pid),

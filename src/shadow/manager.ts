@@ -2,6 +2,7 @@ import type {
   DecisionObserver,
   DecisionRecord,
   RawOutcome,
+  RunHandle,
   ShadowProposal,
   UsageRecord,
   WorkerAdapter,
@@ -25,6 +26,8 @@ type Pending = {
   adapter: WorkerAdapter;
   input_sha: string;
   raw: RawOutcome | null;
+  handle?: RunHandle;
+  abandoned?: boolean;
   deadline: number;
   startedMs: number;
 };
@@ -173,7 +176,12 @@ export class ShadowManager implements DecisionObserver {
     // Background, by design: the coordinator never waits on this.
     void adapter
       .dispatch(req)
-      .then((h) => adapter.wait(h))
+      .then((h) => {
+        p.handle = h;
+        // Given up on while it was starting.
+        if (p.abandoned) void this.stop(p);
+        return adapter.wait(h);
+      })
       .then(
         (raw) => {
           p.raw = raw;
@@ -204,6 +212,7 @@ export class ShadowManager implements DecisionObserver {
         this.finish(p, p.raw);
       } else if (e.now() >= p.deadline) {
         this.pending.delete(id);
+        void this.stop(p);
         this.unavailable(p, 'TIMEOUT');
       }
     }
@@ -310,7 +319,8 @@ export class ShadowManager implements DecisionObserver {
         family_relation: p?.relation ?? null,
         session_id: raw?.session_id ?? null,
         report,
-        mock: this.o.transport !== 'real',
+        // From what the transport observed, never from worker output.
+        mock: (raw?.transport_provenance ?? this.o.transport) !== 'real',
       },
       comparison: compared ?? {
         match: null,
@@ -394,10 +404,33 @@ export class ShadowManager implements DecisionObserver {
     }
   }
 
+  // A shadow attempt nobody's waiting for doesn't get to keep running. Nothing here touches the ledger,
+  // so steering can't tell; and a failure to stop it is no reason to stop the run.
+  private async stop(p: Pending): Promise<void> {
+    p.abandoned = true;
+    if (!p.handle) return;
+    const e = this.engine();
+    try {
+      await p.adapter.cancel(p.handle);
+      const out_dir = e.p.store.path(`shadow/attempts/${p.attempt_id}`);
+      const cwd = this.o.scratchDir(p.rec.decision_id);
+      const left = await e.p.scanner.scan({ attempt_id: p.attempt_id, out_dir, cwd });
+      if (left.length)
+        await e.p.killer.kill(
+          left.map((x) => x.pid),
+          'SIGKILL',
+        );
+    } catch {
+      // Recorded as unavailable already. The next resume scans for it too.
+    }
+  }
+
   // Before RUN_REPORT: wait, for at most the end-of-run limit, then mark the rest unavailable.
   async drain(): Promise<void> {
     const e = this.engine();
-    const limit = e.now() + e.p.policy.settings.timeouts.shadow_end_wait_s * 1000;
+    // The operator stopped this run: stop its proposals as well, rather than wait for them.
+    const wait = e.s.state === 'CANCELLED' ? 0 : e.p.policy.settings.timeouts.shadow_end_wait_s;
+    const limit = e.now() + wait * 1000;
     while (this.pending.size > 0 && e.now() < limit) {
       this.poll();
       if (this.pending.size === 0) break;
@@ -408,10 +441,13 @@ export class ShadowManager implements DecisionObserver {
       );
     }
     this.poll();
+    const stops: Promise<void>[] = [];
     for (const [id, p] of [...this.pending]) {
       this.pending.delete(id);
+      stops.push(this.stop(p));
       this.unavailable(p, 'END_OF_RUN');
     }
+    await Promise.all(stops);
     this.resolveOutcomes();
   }
 

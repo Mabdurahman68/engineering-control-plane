@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 import { decisionSchema } from '../contracts/index.ts';
 import { assertMixedFamilies, loadPolicy, policyHash } from '../policy/load.ts';
 import { renderMetrics, renderStatus } from '../report/report.ts';
+import { makeRelayAdapters } from '../workers/relay/adapter.ts';
 import { verifyRelayPins } from '../workers/relay/pins.ts';
 import { replayCommand } from './replay-cmd.ts';
 import { evalCommand } from './eval-cmd.ts';
@@ -232,7 +233,14 @@ async function cmdDoctor(args: string[]) {
     });
     line(r.status === 0, 'notify.command reached its channel');
   }
-  // Reading a CLI's version runs it, so that waits for the guard inside the relay adapter's own probe.
+  // Reading a CLI's version runs it, so it happens only inside the relay adapter, after the guard.
+  for (const adapter of Object.values(
+    makeRelayAdapters({ policy, repoRoot: root, home: ecpHome() }),
+  )) {
+    const h = await adapter.probe(adapter.id);
+    if (h.installed) line(h.version_ok, `${adapter.id}: ${h.cli_version}, auth ${h.auth}`);
+    else process.stdout.write(`warn ${adapter.id} unavailable: ${h.detail}\n`);
+  }
   process.exitCode = bad ? 1 : 0;
 }
 
