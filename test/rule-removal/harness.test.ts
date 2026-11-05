@@ -38,7 +38,7 @@ describe('the rule-removal harness refuses', () => {
   it('a patch that only renames a diagnostic: a failure with no token', () => {
     const r = harness(negative('mistargeted'));
     expect(r.status).not.toBe(0);
-    expect(r.output).toMatch(/patch_not_targeted|survived/);
+    expect(r.output).toContain('patch_not_targeted');
   }, 300_000);
   it('a patch that breaks a sibling', () => {
     const r = harness(negative('breaks-sibling'));

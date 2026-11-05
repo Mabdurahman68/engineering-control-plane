@@ -94,6 +94,8 @@ export function computeFigures(
       mock: false,
     },
   };
+  const latestClaim = new Map<string, any>();
+  let finished = 0;
   const disagreement = new Map<string, Figures['disagreements'][number]>();
   const decisions = new Map<string, { point: string; risk: string }>();
   const shadowRung = new Map<string, string>();
@@ -138,16 +140,11 @@ export function computeFigures(
         }
         break;
       }
-      case 'claim.recorded': {
-        const c = d.claim;
-        if (c.final === 'VERIFIED') f.claims.verified += 1;
-        else if (c.final === 'CORRECTED') f.claims.corrected += 1;
-        else if (c.final === 'REJECTED') f.claims.rejected += 1;
-        else f.claims.unverified += 1;
-        if (c.mechanical.status === 'CONTRADICTED')
-          f.claims.corrections.push({ claim: c.claim, observed: c.mechanical.observed });
+      case 'claim.recorded':
+        // A reviewer's verdict records the claim again. The later record is the claim's state.
+        latestClaim.set(d.claim.claim_id, d.claim);
         break;
-      }
+
       case 'fallback.taken':
         f.fallbacks.push({ from: d.from, to: d.to, class: d.class });
         break;
@@ -167,6 +164,7 @@ export function computeFigures(
         }
         break;
       case 'dispatch.finished':
+        finished += 1;
         if (typeof d.wall_clock_s === 'number') f.worker_wall_s += d.wall_clock_s;
         break;
       case 'operator.decision':
@@ -230,6 +228,16 @@ export function computeFigures(
         break;
     }
   }
+  for (const c of latestClaim.values()) {
+    if (c.final === 'VERIFIED') f.claims.verified += 1;
+    else if (c.final === 'CORRECTED') f.claims.corrected += 1;
+    else if (c.final === 'REJECTED') f.claims.rejected += 1;
+    else f.claims.unverified += 1;
+    if (c.mechanical.status === 'CONTRADICTED')
+      f.claims.corrections.push({ claim: c.claim, observed: c.mechanical.observed });
+  }
+  // An invocation with no usage record is unmeasured, and still counts as an invocation.
+  f.usage.total = Math.max(f.usage.total, finished);
   f.disagreements = [...disagreement.values()];
   for (const o of outcome.values()) {
     if (o.label === 'CONSISTENT_WITH_COORDINATOR') f.shadow.labels.coordinator += 1;

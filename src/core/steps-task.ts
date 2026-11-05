@@ -528,7 +528,7 @@ async function stepGating(e: Engine, t: TaskRec): Promise<boolean> {
   const checkout = e.p.paths.checkout(e.o.runId, `gate-${t.task_id}-${snap.n}`);
   await git.removeWorktree(checkout);
   await git.addWorktree(checkout, null, snap.commit);
-  e.append('gate.intent', t.task_id, { n: snap.n, tree: snap.tree });
+  e.append('gate.intent', t.task_id, { n: snap.n, tree: snap.tree, checkout });
   const requiredTests = e.spec.required_tests.filter((x) => t.spec.required_tests.includes(x.id));
   const base = t.base_commit as string;
   const profile = e.profile();
@@ -794,18 +794,18 @@ function failedSoftGates(t: TaskRec) {
   return (run?.results ?? []).filter((r: any) => r.soft && r.status === 'FAIL') as any[];
 }
 
-function filerRung(e: Engine, t: TaskRec): string | null {
+function filerRung(e: Engine, t: TaskRec, skip: string[]): string | null {
   if (t.is_integration) {
     const auth = e.authorsIntegrated();
     return (
       e.p.policy.workers.ladders['integration-repair'].find(
-        (r) => auth.includes(e.family(r)) && e.rungAvailable(r),
+        (r) => !skip.includes(r) && auth.includes(e.family(r)) && e.rungAvailable(r),
       ) ?? null
     );
   }
   const snap = lastSnapshot(t);
   const rung = snap?.rung ?? t.rung;
-  return rung && e.rungAvailable(rung) ? rung : null;
+  return rung && !skip.includes(rung) && e.rungAvailable(rung) ? rung : null;
 }
 
 async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
@@ -828,7 +828,14 @@ async function stepChallenge(e: Engine, t: TaskRec): Promise<boolean> {
     await e.refreshHealth(Object.keys(e.p.policy.workers.rungs));
     if (holdFor(e, t, 'challenge')?.waiting) return false;
     if (e.capBlocks()) return false;
-    const rung = filerRung(e, t);
+    const skip = skipListFor(e, t, 'challenge');
+    const rung = filerRung(e, t, skip);
+    if (!rung && skip.length) {
+      // The filer has used its retries. A challenge is optional, so this is simply none filed.
+      e.decide('DP-DISAGREEMENT', t, 'repair', t.task_id, 'CHALLENGE_PENDING', 'REPAIR_PENDING');
+      e.taskTo(t, 'REPAIR_PENDING', 'no_challenge', { next_step: 'repair' });
+      return true;
+    }
     if (!rung) {
       e.taskTo(t, 'TASK_WAITING_WORKER', 'no_compliant_rung', { next_step: 'challenge' });
       return true;
@@ -1507,7 +1514,9 @@ async function stepWaiting(e: Engine, t: TaskRec): Promise<boolean> {
     return true;
   }
   if (t.next_step === 'challenge') {
-    if (!filerRung(e, t)) return false;
+    // With the filer's retries used, the challenge step is where that gets settled.
+    const skip = skipListFor(e, t, 'challenge');
+    if (!filerRung(e, t, skip) && skip.length === 0) return false;
     e.taskTo(t, 'CHALLENGE_PENDING', 'eligible_challenge');
     return true;
   }

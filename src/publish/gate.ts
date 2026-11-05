@@ -147,7 +147,7 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
   // H-PUSH-BASE: exactly at the base, or at the one commit a recorded acceptance names.
   const remote = await lsRemote(i.repo, i.remoteUrl);
   const observed = remote.get(`refs/heads/${i.baseBranch}`) ?? null;
-  if (observed !== i.baseCommit && observed !== i.acceptedBase) {
+  if (observed === null || (observed !== i.baseCommit && observed !== i.acceptedBase)) {
     fail('H-PUSH-BASE', `remote ${i.baseBranch} is at ${observed}, wanted ${i.baseCommit}`);
   }
   if (!i.remoteUrl.includes(i.repoName) && !i.remoteUrl.startsWith('/'))

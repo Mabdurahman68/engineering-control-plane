@@ -208,7 +208,7 @@ export function renderReport(i: ReportInput): string {
     '## Cost and time',
     `Elapsed: ${hhmm((last - first) / 1000)}   Worker time: ${hhmm(f.worker_wall_s)}`,
     `Tokens: ${f.usage.measured ? f.usage.tokens : 'unavailable'} (${f.usage.measured} of ${f.usage.total} measured)`,
-    `Cost: ${f.usage.cost_measured ? `$${f.usage.cost_usd.toFixed(2)}` : 'unavailable'} (${f.usage.cost_measured ? 'vendor CLI' : 'no source'})`,
+    `Cost: ${f.usage.cost_measured ? `${f.usage.cost_measured < f.usage.total ? 'at least ' : ''}$${f.usage.cost_usd.toFixed(2)}` : 'unavailable'} (${f.usage.cost_measured ? `vendor CLI, ${f.usage.cost_measured} of ${f.usage.total} measured` : 'no source'})`,
     `Human interventions: ${f.interventions}`,
     '',
     ...shadowSection(i, f),
@@ -329,7 +329,14 @@ export function renderMetrics(
     illegal += f.shadow.illegal;
     for (const t of Object.values(r.state.tasks)) {
       tasks += 1;
-      if (t.state === 'TASK_PASSED') unaided += 1;
+      // An owner decision on the task, at any point, means it didn't finish without them.
+      const decided = r.events.some(
+        (e) => e.type === 'operator.decision' && e.task_id === t.task_id,
+      );
+      const escalated = Object.values<any>(r.state.escalations).some(
+        (x) => x.task_id === t.task_id,
+      );
+      if (t.state === 'TASK_PASSED' && !decided && !escalated) unaided += 1;
     }
     for (const e of Object.values<any>(r.state.escalations))
       escalations[e.reason] = (escalations[e.reason] ?? 0) + 1;

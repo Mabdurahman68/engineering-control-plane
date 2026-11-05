@@ -54,7 +54,7 @@ export async function stepPreflight(e: Engine): Promise<boolean> {
   const checkout = e.p.paths.checkout(e.o.runId, 'baseline');
   await git.removeWorktree(checkout);
   await git.addWorktree(checkout, null, spec.target.base_commit);
-  e.append('gate.intent', null, { baseline: true });
+  e.append('gate.intent', null, { baseline: true, checkout });
   const res = await e.p.runner.run(spec.full_test_command.command, {
     cwd: checkout,
     timeout_s: spec.full_test_command.timeout_s,

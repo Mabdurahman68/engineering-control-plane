@@ -1,4 +1,5 @@
-import type { RawOutcome } from '../contracts/index.ts';
+import type { LedgerEvent, RawOutcome } from '../contracts/index.ts';
+import { loadLedger } from '../ledger/ledger.ts';
 import { spawnFailed, type Engine } from './engine.ts';
 import { InvariantViolation, type AttemptRec } from './reducer.ts';
 
@@ -8,8 +9,12 @@ function ref(a: AttemptRec) {
 
 // Kill, wait, kill harder, then confirm. Nothing proceeds until the check is clean.
 export async function killAttempt(e: Engine, a: AttemptRec): Promise<number> {
+  return killRef(e, ref(a));
+}
+
+async function killRef(e: Engine, target: ReturnType<typeof ref>): Promise<number> {
   const { scanner, killer } = e.p;
-  const found = await scanner.scan(ref(a));
+  const found = await scanner.scan(target);
   if (found.length > 0) {
     await killer.kill(
       found.map((x) => x.pid),
@@ -19,17 +24,17 @@ export async function killAttempt(e: Engine, a: AttemptRec): Promise<number> {
     let remaining = found;
     for (let i = 0; i < 10 && remaining.length > 0; i++) {
       await killer.sleep(1000);
-      remaining = await scanner.scan(ref(a));
+      remaining = await scanner.scan(target);
     }
     if (remaining.length > 0)
       await killer.kill(
         remaining.map((x) => x.pid),
         'SIGKILL',
       );
-    const last = await scanner.scan(ref(a));
+    const last = await scanner.scan(target);
     if (last.length > 0) {
       throw new InvariantViolation(
-        `attempt ${a.attempt_id} still has live processes: ${last.map((x) => x.pid).join(', ')}`,
+        `attempt ${target.attempt_id} still has live processes: ${last.map((x) => x.pid).join(', ')}`,
       );
     }
   }
@@ -70,8 +75,54 @@ export const lostOutcome = (): RawOutcome => ({
   result_present: false,
 });
 
+// A gate.intent with no outcome: kill by the stage's method, and discard the checkout. The step runs
+// it again, because nothing recorded that it finished (state machine §8).
+async function reconcileOpenGates(e: Engine, events: LedgerEvent[]): Promise<void> {
+  const open = new Map<string, string>();
+  for (const ev of events) {
+    const key = ev.task_id ?? '';
+    if (ev.type === 'gate.intent' && ev.data.checkout) open.set(key, ev.data.checkout as string);
+    if (ev.type === 'gate.finished') open.delete(key);
+  }
+  for (const checkout of open.values()) {
+    await killRef(e, { attempt_id: 'gate', out_dir: checkout, cwd: checkout });
+    await e.p.git.removeWorktree(checkout);
+  }
+}
+
+// A crash between an attempt's finish and its usage record would otherwise lose that invocation.
+function recoverUsage(e: Engine, events: LedgerEvent[]) {
+  const recorded = new Set(
+    events.filter((ev) => ev.type === 'usage.recorded').map((ev) => ev.data.attempt_id),
+  );
+  for (const ev of events) {
+    if (ev.type !== 'dispatch.finished' || recorded.has(ev.data.attempt_id)) continue;
+    const a = e.s.attempts[ev.data.attempt_id as string];
+    if (!a) continue;
+    const raw = e.loadRaw(a);
+    const adapter = e.p.adapters[e.rung(a.rung)?.adapter];
+    const usage =
+      raw && adapter
+        ? adapter.usage(raw)
+        : {
+            source: 'unavailable',
+            tokens: 'unavailable',
+            cost_usd: 'unavailable',
+            quota_snapshot: 'unavailable',
+          };
+    e.append('usage.recorded', a.task_id, {
+      attempt_id: a.attempt_id,
+      ...usage,
+      wall_clock_s: ev.data.wall_clock_s,
+    });
+  }
+}
+
 // Runs once on resume, before any new work. Scanning sends no signal; `planRecovery` decides.
 export async function reconcileOpenAttempts(e: Engine): Promise<void> {
+  const events = loadLedger(e.p.ledgerStore).events;
+  recoverUsage(e, events);
+  await reconcileOpenGates(e, events);
   for (const a of Object.values(e.s.attempts)) {
     if (a.finished || a.fenced || a.class !== null) continue;
     const rung = e.rung(a.rung);

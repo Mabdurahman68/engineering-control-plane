@@ -48,6 +48,13 @@ export async function stepPushing(e: Engine): Promise<boolean> {
       e.append('push.done', null, { sha, recovered: true });
       return true;
     }
+    // Something else moved it since the intent. That isn't ours to overwrite, even if it would pass.
+    if (e.s.publish.push_intent && at !== null) {
+      const reason = `the remote is at ${at}, not the frozen ${sha}`;
+      e.append('push.rejected', null, { sha, reason });
+      e.runTo('PUSH_BLOCKED', 'push_blocked', { reason });
+      return true;
+    }
     e.append('push.gate_started', null, { sha });
     const gate = await pub.gates(ctx, sha);
     if (!gate.ok) {

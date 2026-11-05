@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -70,11 +71,42 @@ export function coordinatorAlive(lockPath: string): boolean {
   }
 }
 
+// Whole file or nothing, and only if there's none: a link can't overwrite, and two can't both succeed.
+function createLock(lockPath: string): boolean {
+  const tmp = `${lockPath}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ pid: process.pid, start: procStart(process.pid) }));
+  try {
+    linkSync(tmp, lockPath);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
 export function takeLock(lockPath: string): boolean {
-  if (coordinatorAlive(lockPath)) return false;
   mkdirSync(join(lockPath, '..'), { recursive: true });
-  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, start: procStart(process.pid) }));
-  return true;
+  if (createLock(lockPath)) return true;
+  if (coordinatorAlive(lockPath)) return false;
+  // Stale. Move it aside: a rename has one winner. If what moved turns out to be live, a faster process
+  // replaced the stale one after the check above, so it goes straight back.
+  const aside = `${lockPath}.${process.pid}.stale`;
+  try {
+    renameSync(lockPath, aside);
+  } catch {
+    return false;
+  }
+  if (coordinatorAlive(aside)) {
+    try {
+      linkSync(aside, lockPath);
+    } finally {
+      rmSync(aside, { force: true });
+    }
+    return false;
+  }
+  rmSync(aside, { force: true });
+  return createLock(lockPath);
 }
 
 export function dayUsageFrom(home: string, excludeRun: string, now: number) {
@@ -155,7 +187,7 @@ export function wire(o: {
   const engineRef: { current: Engine | null } = { current: null };
   const ports: EnginePorts = {
     git: new RealGit(o.spec.target.repo_path),
-    runner: new RealCommandRunner(),
+    runner: new RealCommandRunner(() => existsSync(control)),
     store,
     ledgerStore: ledger,
     clock,

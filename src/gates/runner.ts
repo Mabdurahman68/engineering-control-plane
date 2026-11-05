@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { GateStopped } from '../core/ports.ts';
 import type { CommandResult, CommandRunner } from '../worktree/port.ts';
 
 // Gates run with a scrubbed environment: no credentials, no inherited shell state.
@@ -9,8 +10,12 @@ export function scrubbedEnv(): NodeJS.ProcessEnv {
 }
 
 export class RealCommandRunner implements CommandRunner {
+  private readonly shouldStop: () => boolean;
+  constructor(shouldStop: () => boolean = () => false) {
+    this.shouldStop = shouldStop;
+  }
   run(argv: string[], opts: { cwd: string; timeout_s: number }): Promise<CommandResult> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const started = Date.now();
       let log = '';
       let timedOut = false;
@@ -37,8 +42,21 @@ export class RealCommandRunner implements CommandRunner {
         killGroup('SIGTERM');
         setTimeout(() => killGroup('SIGKILL'), 5000).unref();
       }, opts.timeout_s * 1000);
+      // The coordinator is in here, so the operator's request has to be noticed here too.
+      let stopped = false;
+      const watch = setInterval(() => {
+        if (stopped || !this.shouldStop()) return;
+        stopped = true;
+        killGroup('SIGTERM');
+        setTimeout(() => killGroup('SIGKILL'), 2000).unref();
+      }, 200);
       const finish = (code: number) => {
         clearTimeout(timer);
+        clearInterval(watch);
+        if (stopped) {
+          reject(new GateStopped());
+          return;
+        }
         resolve({ code, log, duration_ms: Date.now() - started, timed_out: timedOut });
       };
       child.on('error', (e) => {

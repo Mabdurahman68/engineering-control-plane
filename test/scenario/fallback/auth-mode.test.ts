@@ -28,6 +28,18 @@ describe('a subscription rung failing', () => {
     assertNotForbidden(RULE, used.length > 0, `${behaviour} moved the work to an API key`);
     expect(sim.adapter.log.some((l: any) => l.rung === 'mock-openai')).toBe(true);
   });
+  it.each(['auth_no', 'quota_exhausted'] as const)(
+    'found by a probe as %s, before any dispatch, never reaches an API-key rung',
+    async (result) => {
+      const sim: any = makeSim({
+        policy: withKeyRung,
+        probes: { 'mock-openai': result } as never,
+      });
+      await runSim(sim);
+      const used = sim.adapter.log.filter((l: any) => l.rung === 'mock-key');
+      assertNotForbidden(RULE, used.length > 0, `${result} moved the work to an API key`);
+    },
+  );
   it('an API-key rung the owner put first is still theirs to use, until a subscription fails', async () => {
     const sim: any = makeSim({
       policy: (p: any) => {

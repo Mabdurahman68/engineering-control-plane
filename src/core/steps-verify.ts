@@ -83,7 +83,7 @@ async function stageGates(e: Engine): Promise<boolean> {
   const checkout = e.p.paths.checkout(e.o.runId, `verify-${e.s.verify.generation}`);
   await git.removeWorktree(checkout);
   await git.addWorktree(checkout, null, tip);
-  e.append('gate.intent', null, { integrated: true, tree });
+  e.append('gate.intent', null, { integrated: true, tree, checkout });
   const waivers = e.s.waivers
     .filter((w: any) => w.kind === 'gate')
     .map((w: any) => ({
@@ -189,7 +189,7 @@ async function stageAcCommands(e: Engine): Promise<boolean> {
   for (const c of e.spec.acceptance_criteria) {
     for (const v of c.verify) {
       if (v.kind !== 'command') continue;
-      e.append('gate.intent', null, { ac: c.id, tree });
+      e.append('gate.intent', null, { ac: c.id, tree, checkout });
       const res = await runner.run(v.command, { cwd: checkout, timeout_s: v.timeout_s });
       const rel = `evidence/integrated/${c.id}-${e.s.verify.generation}.log`;
       store.write(rel, res.log);

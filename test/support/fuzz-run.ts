@@ -92,8 +92,21 @@ const STEP: Record<string, string[]> = {
     'auth',
     'outage',
     'timeout',
+    'rate_limit',
+    'relay_lost',
+    'unknown_failure',
   ],
-  adjudicate: ['adjudicate', 'malformed_report', 'quota', 'auth', 'outage', 'timeout'],
+  adjudicate: [
+    'adjudicate',
+    'malformed_report',
+    'quota',
+    'auth',
+    'outage',
+    'timeout',
+    'rate_limit',
+    'relay_lost',
+    'unknown_failure',
+  ],
 };
 const RULINGS = ['waive', 'override', 'reject', 'split'];
 const DEPTHS = ['QUICK', 'STANDARD', 'DEEP', 'EXHAUSTIVE'] as const;

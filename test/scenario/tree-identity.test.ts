@@ -59,10 +59,15 @@ describe('tested = reviewed = committed', () => {
     const exit = await runReal(sim);
     expect(exit.state).toBe('MOCK_RUN_COMPLETE');
     const t1 = sim.engine.s.tasks.T1;
+    // The first gate run saw a rewritten tree. If no gate in it failed, the rewrite went unnoticed.
+    assertNotForbidden(
+      RULE,
+      !t1.gate_runs[0].results.some((x) => x.status === 'FAIL'),
+      'a tree rewritten by a gate passed',
+    );
     const first = t1.gate_runs.find((r) =>
       r.results.some((x) => x.id === 'H-TREE-ID' && x.status === 'FAIL'),
     );
-    assertNotForbidden(RULE, first === undefined, 'a tree rewritten by a gate passed');
     expect(first?.results.find((r) => r.id === 'H-TREE-ID')?.detail).toContain('src/a.ts');
     // No review ran on the tree whose evidence was discarded.
     expect(t1.reviews.every((r) => r.tree !== first?.tree)).toBe(true);

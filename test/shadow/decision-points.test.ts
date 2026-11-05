@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { shadowProposalSchema } from '../../src/contracts/index.ts';
+import { assertNotForbidden } from '../support/assert.ts';
 import { makeSim, ofType, runSim } from '../support/harness.ts';
 
 const record = (sim: any, id: string) => JSON.parse(sim.store.read(`shadow/${id}.json`));
@@ -261,5 +262,34 @@ describe('no path from shadow to steering', () => {
       backoff: s.backoff,
     });
     expect(pick(sim.engine.s)).toEqual(pick(plain.engine.s));
+  });
+});
+
+describe('a crash right after a decision', () => {
+  it('still leaves every decision with a proposal or a recorded reason', async () => {
+    const { SimulatedKill } = await import('../../src/core/ports.ts');
+    const sim: any = makeSim({ shadow: true });
+    let hits = 0;
+    sim.failFn = (n: string) => {
+      if (n === 'after:decision.made' && ++hits === 1) throw new SimulatedKill(n);
+    };
+    await expect(runSim(sim)).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const { resumeSim, events } = await import('../support/harness.ts');
+    const end = await resumeSim(sim);
+    expect(end.state).toBe('MOCK_RUN_COMPLETE');
+    const evs = events(sim);
+    const covered = new Set(
+      evs
+        .filter((e: any) => e.type === 'shadow.recorded' || e.type === 'shadow.unavailable')
+        .map((e: any) => e.data.decision_id),
+    );
+    for (const e of evs.filter((x: any) => x.type === 'decision.made')) {
+      assertNotForbidden(
+        'AC-J',
+        !covered.has(e.data.decision_id),
+        `${e.data.decision_id} has no record`,
+      );
+    }
   });
 });

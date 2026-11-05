@@ -41,8 +41,8 @@ function input(r: ReturnType<typeof gateRepo>, frozen: string, over: any = {}) {
   };
 }
 const filesFail = async (r: ReturnType<typeof gateRepo>, frozen: string, over: any = {}) => {
-  const f = await runPushGates(input(r, frozen, over));
-  return f.filter((x) => x.id === 'H-PUSH-FILES');
+  // All of them: a gate that's merely been renamed still blocks, and that isn't the forbidden outcome.
+  return runPushGates(input(r, frozen, over));
 };
 
 describe('forbidden files across history', () => {

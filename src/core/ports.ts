@@ -123,3 +123,7 @@ export type PublishContext = {
   prTitle: string;
   prBody: string;
 };
+
+// Thrown by a runner that stopped its command because the operator asked. Nothing from that gate run
+// counts: no outcome is recorded, and it runs again if the run does.
+export class GateStopped extends Error {}

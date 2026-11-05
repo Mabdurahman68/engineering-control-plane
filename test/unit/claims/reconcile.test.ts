@@ -76,9 +76,9 @@ describe('claim reconciliation', () => {
       [{ kind: 'test_id', spec: { id: 'unit' } }, 'pass'],
     ];
     for (const [verifier, value] of cases) {
-      const yes = await run([{ claim: 'c', type: 'FACT', value, verifier }]);
+      const yes = await run([{ claim: 'c', type: 'COUNT', value, verifier }]);
       expect(yes.claims.at(-1)?.mechanical.status, verifier.kind).toBe('VERIFIED');
-      const no = await run([{ claim: 'c', type: 'FACT', value: 'wrong', verifier }]);
+      const no = await run([{ claim: 'c', type: 'COUNT', value: 'wrong', verifier }]);
       expect(no.claims.at(-1)?.mechanical.status, verifier.kind).toBe('CONTRADICTED');
     }
   });

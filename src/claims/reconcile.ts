@@ -148,7 +148,10 @@ export async function reconcileClaims(input: {
         asserted_by: input.rung,
         verifier: c.verifier ?? { kind: 'none', spec: {} },
       });
-      if (v.applicable) {
+      // FACT, BEHAVIOUR and ARCHITECTURE go to the reviewer. A file existing doesn't make a claim about
+      // security true, so a verifier decides only what it can measure.
+      const measurable = mechanicalType || HAS_NUMBER.test(c.claim) || typeof c.value === 'number';
+      if (v.applicable && measurable) {
         const agrees = same(c.value, v.observed);
         rec.mechanical = {
           status: agrees ? 'VERIFIED' : 'CONTRADICTED',
@@ -156,8 +159,9 @@ export async function reconcileClaims(input: {
           evidence: null,
         };
         rec.final = agrees ? 'VERIFIED' : 'REJECTED';
-      } else if (mechanicalType || HAS_NUMBER.test(c.claim) || typeof c.value === 'number') {
+      } else {
         // A number with no usable verifier stays UNVERIFIED, whatever its type. No model can mark it.
+        // Anything else waits for the reviewer.
         rec.final = 'UNVERIFIED';
       }
       out.push(rec);
@@ -193,4 +197,31 @@ export async function reconcileClaims(input: {
         .map((c) => `${c.claim}: observed ${JSON.stringify(c.mechanical.observed)}`)
         .join('; ');
   return { claims: out, ok, detail };
+}
+
+// What a reviewer's verdict does to a recorded claim (contracts §4). Code decides: mechanical evidence
+// isn't overruled, and a number with no verifier can't be marked VERIFIED by a model.
+export function applyClaimReview(
+  c: Claim,
+  r: { status: 'PASS' | 'FAIL' | 'NOT_REVIEWED'; reason: string; corrected_value: unknown },
+  reviewer: string,
+): Claim | null {
+  if (r.status === 'NOT_REVIEWED') return null;
+  const independent_review = {
+    status: r.status,
+    reviewer,
+    reason: r.reason,
+    corrected_value: r.corrected_value ?? null,
+  };
+  const out: Claim = { ...c, independent_review };
+  if (c.mechanical.status !== 'NOT_APPLICABLE') return out;
+  const semantic = c.type === 'FACT' || c.type === 'BEHAVIOUR' || c.type === 'ARCHITECTURE';
+  const numeric = HAS_NUMBER.test(c.claim) || typeof c.value === 'number';
+  if (r.status === 'PASS') {
+    if (semantic && !numeric && r.reason.trim()) out.final = 'VERIFIED';
+    return out;
+  }
+  out.final =
+    r.corrected_value !== null && r.corrected_value !== undefined ? 'CORRECTED' : 'REJECTED';
+  return out;
 }

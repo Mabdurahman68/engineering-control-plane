@@ -19,6 +19,7 @@ import {
 } from '../support/publish.ts';
 import { makePublisher } from '../../src/publish/publisher.ts';
 import { ofTypeReal } from '../support/real-events.ts';
+import { ShadowManager } from '../../src/shadow/manager.ts';
 
 const dest = 'refs/heads/ecp/run1/integration';
 const resume = async (sim: any, opts: any = {}) => {
@@ -235,6 +236,25 @@ describe('crash recovery', () => {
     assertNotForbidden('B4-PR', gh.state().prs.length !== 1, 'a second PR');
     expect(gh.calls().filter((c) => c.startsWith('pr create')).length).toBe(1);
   });
+  it('the remote moved to an ancestor after a crash blocks, though it would pass the gates', async () => {
+    const { sim, bare, publisher } = publishRun();
+    let pushes = 0;
+    const push = publisher.push.bind(publisher);
+    publisher.push = async (c, s) => {
+      pushes++;
+      execFileSync('git', ['-C', sim.repo, 'push', '-q', bare, `${sim.base}:${dest}`]);
+      throw new SimulatedKill(`after intent, for ${s}`);
+    };
+    await expect(runReal(sim)).rejects.toBeInstanceOf(SimulatedKill);
+    publisher.push = async (c, s) => {
+      pushes++;
+      return push(c, s);
+    };
+    const exit = await resume(sim);
+    assertNotForbidden('B4-FROZEN', pushes > 1, 'recovery pushed over what it found');
+    expect(exit.state).toBe('PUSH_BLOCKED');
+    expect(remoteRef(bare, dest)).toBe(sim.base);
+  });
   it('the remote at something else after a crash blocks', async () => {
     const { sim, bare, publisher } = publishRun();
     const push = publisher.push.bind(publisher);
@@ -352,4 +372,77 @@ describe('AC-E: the code has no path to anything else', () => {
     });
     expect(end.state).toBe('READY_FOR_HUMAN_MERGE');
   });
+  it.each(['reject', 'abandon'])(
+    'the owner can %s at that stop, and the run ends',
+    async (option) => {
+      const { makeSim, runSim, resumeSim, decision } = await import('../support/harness.ts');
+      const { readyAdapter } = await import('../support/ready-adapter.ts');
+      const sim = makeSim({ spec: { declared_risk: 'critical', requested_depth: 'EXHAUSTIVE' } });
+      sim.ports.adapters.mock = readyAdapter(sim.adapter);
+      expect((await runSim(sim)).state).toBe('ESCALATION_REQUIRED');
+      const end = await resumeSim(sim, {
+        decision: decision(sim.engine.s.open_escalation as string, option),
+      });
+      expect(end.state).toBe('CANCELLED');
+      assertNotForbidden('AC-E', end.state === 'READY_FOR_HUMAN_MERGE', 'it went ahead anyway');
+    },
+  );
+});
+
+describe('the shadow at DP-PUBLISH', () => {
+  const steering = (evs: any[]) =>
+    evs
+      .filter(
+        (e) =>
+          !e.type.startsWith('shadow.') && !['heartbeat', 'host.sleep_detected'].includes(e.type),
+      )
+      .map((e) => e.type);
+  const run = async (behaviour: string | null) => {
+    const script = behaviour ? [{ match: { step: 'shadow', point: 'DP-PUBLISH' }, behaviour }] : [];
+    const { sim } = publishRun({ script: script as never });
+    // Real clock here: a slow shadow waits out the whole end-of-run limit.
+    sim.policy.settings.timeouts.shadow_end_wait_s = 1;
+    sim.ports.observer = new ShadowManager(() => sim.engine, {
+      scratchDir: (id: string) => join(sim.home, 'scratch', id),
+      transport: 'mock',
+    });
+    (sim.adapter as any).shadowOracle = () => ({ action: 'push', target: null });
+    const exit = await runReal(sim);
+    return { exit, events: loadLedger(sim.ledger).events };
+  };
+  it.each([
+    'shadow_agree',
+    'shadow_disagree',
+    'shadow_illegal',
+    'shadow_other',
+    'shadow_predict',
+    'shadow_malformed',
+    'shadow_timeout',
+    'shadow_quota',
+    'shadow_auth',
+    'shadow_slow',
+    'shadow_crash',
+  ])(
+    '%s has a record, and changes no steering event',
+    async (behaviour) => {
+      const base = await run(null);
+      const r = await run(behaviour);
+      expect(r.exit.state).toBe('PR_OPENED');
+      const made = r.events.find(
+        (e) => e.type === 'decision.made' && e.data.point === 'DP-PUBLISH',
+      );
+      expect(made).toBeTruthy();
+      const record = r.events.find(
+        (e) =>
+          (e.type === 'shadow.recorded' || e.type === 'shadow.unavailable') &&
+          e.data.decision_id === made?.data.decision_id,
+      );
+      expect(record).toBeTruthy();
+      assertNotForbidden(
+        'AC-I',
+        JSON.stringify(steering(r.events)) !== JSON.stringify(steering(base.events)),
+      );
+    },
+    120_000,
+  );
 });

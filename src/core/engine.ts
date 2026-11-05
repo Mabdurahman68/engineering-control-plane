@@ -18,7 +18,7 @@ import { effectiveDepth, maxRisk, specRuleRisk } from '../policy/risk.ts';
 import { compileSecretPatterns } from '../gates/secret.ts';
 import { optionsFor } from './escalations.ts';
 import { fallbackPlan } from './fallback.ts';
-import { type EngineOptions, type EnginePorts, SimulatedKill } from './ports.ts';
+import { type EngineOptions, type EnginePorts, GateStopped, SimulatedKill } from './ports.ts';
 import {
   applyInPlace,
   type AttemptRec,
@@ -310,10 +310,17 @@ export class Engine {
   private apiKeyBarred(r: string): boolean {
     const policy = this.p.policy.workers.rungs;
     if (policy[r]?.auth_mode !== 'api_key') return false;
-    return Object.entries(this.s.quarantine).some(
+    const quarantined = Object.entries(this.s.quarantine).some(
       ([other, q]) =>
         policy[other]?.auth_mode !== 'api_key' && (q.reason === 'QUOTA' || q.reason === 'AUTH'),
     );
+    // A probe can find the same thing before any dispatch does.
+    const probed = [...this.health].some(
+      ([other, h]) =>
+        policy[other]?.auth_mode !== 'api_key' &&
+        (h.reason === 'auth_no' || h.reason === 'quota_exhausted'),
+    );
+    return quarantined || probed;
   }
 
   rungAvailable(r: string): boolean {
@@ -687,7 +694,13 @@ export class Engine {
         await this.enforceDeadlines();
         this.heartbeat();
         this.observe(() => this.p.observer?.poll());
-        const progressed = await this.step();
+        let progressed = true;
+        try {
+          progressed = await this.step();
+        } catch (err) {
+          // The operator's request stopped a gate command. The next pass acts on the request.
+          if (!(err instanceof GateStopped)) throw err;
+        }
         if (RUN_STOPPING.includes(this.s.state) && !this.shouldContinueAfterStop()) break;
         if (!progressed) await this.idle();
       }

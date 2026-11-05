@@ -45,7 +45,9 @@ const blocks = async (
   over: any = {},
 ) => {
   const f = await runPushGates(input(r, frozen, over));
-  assertNotForbidden(rule, !has(f, id), `${id} didn't fire: ${JSON.stringify(f)}`);
+  // Whichever gate says so: a renamed diagnostic isn't a gate that stopped working.
+  assertNotForbidden(rule, f.length === 0, `nothing blocked the push, wanted ${id}`);
+  expect(has(f, id), `${id} didn't fire: ${JSON.stringify(f)}`).toBe(true);
   return f;
 };
 
@@ -197,6 +199,10 @@ describe('H-PUSH-FILES', () => {
 
 describe('H-PUSH-BASE', () => {
   const RULE = 'H-PUSH-BASE';
+  it('a remote base that is missing blocks, with no acceptance to match', async () => {
+    const r = gateRepo();
+    await blocks(RULE, r, r.commit({ 'src/a.ts': 'a\n' }), RULE, { baseBranch: 'no-such-branch' });
+  });
   it('a remote base that has moved blocks', async () => {
     const r = gateRepo();
     const tip = r.commit({ 'src/a.ts': 'a\n' });

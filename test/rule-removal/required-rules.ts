@@ -30,6 +30,7 @@ export const REQUIRED_RULES = [
   'H-PUSH-BASE',
   'H-PUSH-REMOTE',
   'AC-E',
+  'AC-F',
   'AC-I',
   'AC-K',
   'R-REAL-WORKER-GUARD',

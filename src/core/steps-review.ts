@@ -1,6 +1,9 @@
 import type { FailureClass, RawOutcome, ReviewReport } from '../contracts/index.ts';
 import { reviewReportSchema, SEMANTIC_CHECKS } from '../contracts/index.ts';
+import { applyClaimReview } from '../claims/reconcile.ts';
+import type { Claim } from '../contracts/index.ts';
 import { sha256 } from '../ledger/canonical.ts';
+import { loadLedger } from '../ledger/ledger.ts';
 import { consistencyErrors } from '../review/consistency.ts';
 import { effectiveVerdict, waiverVoidCause } from '../review/effective.ts';
 import { type AnchorSource, computeFinding, identityErrors } from '../review/fingerprint.ts';
@@ -277,6 +280,22 @@ export async function collectReview(e: Engine, input: ReviewInput) {
     .map((fp) => ({ fingerprint: fp, cause: waiverVoidCause(fp, scoped as never) }))
     .filter((v) => v.cause !== null);
   e.p.store.write(`reviews/${review_id}.json`, JSON.stringify(review, null, 2));
+  // A later record of a claim supersedes the earlier one.
+  if (report.claims_reviewed.length) {
+    const recorded = new Map<string, Claim>();
+    for (const ev of loadLedger(e.p.ledgerStore).events) {
+      if (ev.type === 'claim.recorded') {
+        const c = ev.data.claim as Claim;
+        recorded.set(c.claim_id, c);
+      }
+    }
+    for (const r of report.claims_reviewed) {
+      const c = recorded.get(r.claim_id);
+      if (!c) continue;
+      const next = applyClaimReview(c, r, a.rung);
+      if (next) e.append('claim.recorded', c.task_id, { claim: next });
+    }
+  }
   e.append('review.collected', a.task_id, {
     attempt_id: a.attempt_id,
     passed_acs: report.criteria.filter((c) => c.verdict === 'PASS').map((c) => c.ac),

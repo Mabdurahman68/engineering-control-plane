@@ -150,6 +150,8 @@ async function runRule(rule: Rule) {
     }
     // Its siblings still pass, so the patch didn't just disable the module.
     for (const n of rule.must_pass) {
+      if (matching(after.tests, n).length === 0)
+        return stop(`no sibling named, patched: ${n.test_name}`);
       for (const t of matching(after.tests, n)) {
         result.sibling_results.push({ name: t.fullName, status: t.status });
         if (t.status !== 'passed') return stop(`a sibling broke: ${t.fullName}`);

@@ -362,6 +362,18 @@ export class ShadowManager implements DecisionObserver {
     const open = [...new Set(intents.map((ev) => ev.data.decision_id as string))].filter(
       (id) => !settled.has(id),
     );
+    // A crash just after a decision leaves no intent at all. It still needs a recorded reason.
+    const opened = new Set(intents.map((ev) => ev.data.decision_id as string));
+    for (const ev of events) {
+      if (ev.type !== 'decision.made') continue;
+      const id = ev.data.decision_id as string;
+      if (settled.has(id) || opened.has(id) || this.pending.has(id)) continue;
+      e.append('shadow.unavailable', ev.task_id, {
+        decision_id: id,
+        status: 'SHADOW_UNAVAILABLE',
+        class: 'LOST',
+      });
+    }
     for (const id of open) {
       // Still running in this process, after a pause rather than a crash.
       if (this.pending.has(id)) continue;
