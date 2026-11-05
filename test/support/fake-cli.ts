@@ -3,7 +3,9 @@ import { dirname, join, resolve } from 'node:path';
 import { tempDir } from './repo.ts';
 
 export const FIXTURE_BIN = resolve('test/fake-cli/bin');
-const SYSTEM = `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`;
+// The prefix is for a run under an OS sandbox, which can only reach `ps` through a helper.
+const PREFIX = process.env.ECP_TEST_PATH_PREFIX ? `${process.env.ECP_TEST_PATH_PREFIX}:` : '';
+const SYSTEM = `${PREFIX}${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`;
 
 // A HOME for the fixtures, holding their script, plus the PATH that finds them first.
 export function fakeWorld(steps: any[] = [], o: { before?: string[] } = {}) {

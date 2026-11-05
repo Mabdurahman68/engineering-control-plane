@@ -15,6 +15,7 @@ import { isolationCommand } from './isolation-cmd.ts';
 import {
   atomicWrite,
   coordinatorAlive,
+  releaseLock,
   ecpHome,
   loadMockScript,
   loadSpecFile,
@@ -56,7 +57,7 @@ async function cmdRun(args: string[]) {
     // Anything that isn't a pinned fixture is a real CLI, and this is the plain place to say so.
     const auth = authoriseClis(repoRoot(), process.env.PATH ?? '');
     if (!auth.allowed) {
-      rmSync(globalLock(), { force: true });
+      releaseLock(globalLock());
       fail(`refused: ${auth.reason}`, 3);
     }
   }
@@ -69,7 +70,7 @@ async function cmdRun(args: string[]) {
   );
   w.engine.createRun();
   const exit = await w.engine.loop();
-  rmSync(globalLock(), { force: true });
+  releaseLock(globalLock());
   process.stdout.write(`${runId} ${exit.state}\n`);
   process.exitCode = exit.code;
 }
@@ -90,14 +91,14 @@ async function runResume(
   const w = wire({ runId, spec, policyDir: cfg.policy ?? undefined, mockScript: cfg.mock_script });
   const locked = JSON.parse(w.store.read('policy.lock') as string).sha256;
   if (locked !== w.policySha && !opts.accept) {
-    rmSync(globalLock(), { force: true });
+    releaseLock(globalLock());
     fail('policy changed since the run started: use --accept-policy-change', 1);
   }
   let decision: Record<string, unknown> | undefined;
   if (opts.decisionFile) {
     const parsed = decisionSchema.safeParse(parse(readFileSync(opts.decisionFile, 'utf8')));
     if (!parsed.success) {
-      rmSync(globalLock(), { force: true });
+      releaseLock(globalLock());
       fail(`invalid decision: ${parsed.error.message}`);
     }
     decision = parsed.data;
@@ -111,7 +112,7 @@ async function runResume(
   });
   if (opts.accept) w.store.write('policy.lock', JSON.stringify({ sha256: w.policySha }));
   const exit = await w.engine.loop();
-  rmSync(globalLock(), { force: true });
+  releaseLock(globalLock());
   process.stdout.write(`${runId} ${exit.state}\n`);
   process.exitCode = exit.code;
 }
@@ -268,11 +269,11 @@ async function cmdPublish(args: string[]) {
   try {
     w.engine.retryPublish(values['accept-base'] ?? null);
   } catch (err) {
-    rmSync(globalLock(), { force: true });
+    releaseLock(globalLock());
     fail((err as Error).message);
   }
   const exit = await w.engine.loop();
-  rmSync(globalLock(), { force: true });
+  releaseLock(globalLock());
   process.stdout.write(`${runId} ${exit.state}\n`);
   process.exitCode = exit.code;
 }

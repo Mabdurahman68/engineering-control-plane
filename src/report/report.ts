@@ -266,7 +266,7 @@ export function renderStatus(i: {
     ),
     `BLOCKERS ${blockers.length ? blockers.join('; ') : 'none'}`,
     `SHADOW agreement=${f.shadow.matched}/${f.shadow.recorded} unavailable=${f.shadow.unavailable} skipped=${f.shadow.skipped}`,
-    `USAGE tokens=${f.usage.measured ? f.usage.tokens : 'unavailable'} cost=${f.usage.cost_measured ? f.usage.cost_usd.toFixed(2) : 'unavailable'} measured=${f.usage.measured}/${f.usage.total} invocations=${f.invocations}`,
+    `USAGE tokens=${f.usage.measured ? f.usage.tokens : 'unavailable'} cost=${f.usage.cost_measured ? f.usage.cost_usd.toFixed(2) : 'unavailable'} cost_measured=${f.usage.cost_measured}/${f.usage.total} measured=${f.usage.measured}/${f.usage.total} invocations=${f.invocations}`,
     `RESULT ${result}`,
     `REPORT runs/${i.runId}/RUN_REPORT.md`,
   ];

@@ -1,15 +1,12 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   appendFileSync,
   existsSync,
-  linkSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
-  rmdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -36,6 +33,8 @@ import { RealGit } from '../worktree/real-git.ts';
 import { makeRelayAdapters } from '../workers/relay/adapter.ts';
 import { makePublisher } from '../publish/publisher.ts';
 
+export { coordinatorAlive, releaseLock, takeLock } from './lock.ts';
+
 export function ecpHome(): string {
   return process.env.ECP_HOME ?? join(homedir(), '.ecp');
 }
@@ -49,68 +48,6 @@ export function loadSpecFile(path: string): Spec {
   const parsed = specSchema.safeParse(parse(readFileSync(path, 'utf8')));
   if (!parsed.success) throw new Error(`invalid spec: ${parsed.error.message}`);
   return parsed.data;
-}
-
-function procStart(pid: number): string | null {
-  try {
-    return (
-      execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim() || null
-    );
-  } catch {
-    return null;
-  }
-}
-
-// A stale lock is one whose PID is dead, or whose process start time differs from the record.
-export function coordinatorAlive(lockPath: string): boolean {
-  if (!existsSync(lockPath)) return false;
-  try {
-    const rec = JSON.parse(readFileSync(lockPath, 'utf8'));
-    const start = procStart(rec.pid);
-    return start !== null && start === rec.start;
-  } catch {
-    return false;
-  }
-}
-
-// Whole file or nothing, and only if there's none: a link can't overwrite, and two can't both succeed.
-function createLock(lockPath: string): boolean {
-  const tmp = `${lockPath}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ pid: process.pid, start: procStart(process.pid) }));
-  try {
-    linkSync(tmp, lockPath);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    rmSync(tmp, { force: true });
-  }
-}
-
-export function takeLock(lockPath: string): boolean {
-  mkdirSync(join(lockPath, '..'), { recursive: true });
-  if (createLock(lockPath)) return true;
-  if (coordinatorAlive(lockPath)) return false;
-  // Stale. Reclaiming is serialised: only the holder of this directory may remove a lock, and it looks
-  // again once it holds it. Nothing but a reclaimer can replace an existing lock, so what it saw stays.
-  const reclaim = `${lockPath}.reclaim`;
-  try {
-    if (Date.now() - statSync(reclaim).mtimeMs > 60_000) rmdirSync(reclaim);
-  } catch {
-    // None there, or someone else just cleared it.
-  }
-  try {
-    mkdirSync(reclaim);
-  } catch {
-    return false;
-  }
-  try {
-    if (coordinatorAlive(lockPath)) return false;
-    rmSync(lockPath, { force: true });
-    return createLock(lockPath);
-  } finally {
-    rmdirSync(reclaim);
-  }
 }
 
 export function dayUsageFrom(home: string, excludeRun: string, now: number) {

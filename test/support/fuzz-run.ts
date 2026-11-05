@@ -67,7 +67,23 @@ const REVIEW = [
   'no_report',
   'crash_midway',
 ];
-const STEP: Record<string, string[]> = {
+// What can happen to any agent step, whichever it is.
+export const ANY_STEP = [
+  'malformed_report',
+  'no_report',
+  'exit_nonzero',
+  'rate_limit',
+  'quota',
+  'auth',
+  'outage',
+  'unknown_failure',
+  'timeout',
+  'hang_ignores_term',
+  'crash_midway',
+  'relay_lost',
+  'spawn_failure',
+];
+const OWN_STEP: Record<string, string[]> = {
   plan: [
     'planner_valid',
     'planner_valid',
@@ -117,6 +133,12 @@ const STEP: Record<string, string[]> = {
     'unknown_failure',
   ],
 };
+export const STEP: Record<string, string[]> = Object.fromEntries(
+  Object.entries(OWN_STEP).map(([step, own]) => [
+    step,
+    [...own, ...ANY_STEP.filter((b) => !own.includes(b))],
+  ]),
+);
 const RULINGS = ['waive', 'override', 'reject', 'split'];
 const DEPTHS = ['QUICK', 'STANDARD', 'DEEP', 'EXHAUSTIVE'] as const;
 const RISKS = ['low', 'medium', 'high', 'critical'] as const;

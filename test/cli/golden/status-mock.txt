@@ -7,6 +7,6 @@ TASK T2 TASK_PASSED attempt=1 repair=0 rung=mock-openai
 TASK T3 TASK_PASSED attempt=1 repair=0 rung=mock-openai
 BLOCKERS none
 SHADOW agreement=8/8 unavailable=0 skipped=0
-USAGE tokens=unavailable cost=unavailable measured=0/8 invocations=8
+USAGE tokens=unavailable cost=unavailable cost_measured=0/8 measured=0/8 invocations=8
 RESULT ecp/run1/integration
 REPORT runs/run1/RUN_REPORT.md

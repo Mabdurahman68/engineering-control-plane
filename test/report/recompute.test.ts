@@ -79,6 +79,12 @@ describe('report figures against the raw ledger', () => {
     expect(st.usage.cost_measured).toBe(`${n.costRuns}/${n.finished}`);
     expect(st.usage.measured).toBe(`${n.tokenRuns}/${n.finished}`);
     expect(st.usage.tokens).toBe(n.tokens);
+    const text = c.run(['status', 'r1']).stdout;
+    assertNotForbidden(
+      RULE,
+      !text.includes(`cost_measured=${n.costRuns}/${n.finished}`),
+      'plain status hid a partial cost',
+    );
   }, 120_000);
   it('claim figures take a claim once, at its latest state', () => {
     const c = cliEnv({

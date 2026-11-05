@@ -1,3 +1,4 @@
+import { lockHolder } from '../../src/cli/lock.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -68,8 +69,7 @@ describe('a real gate subprocess', () => {
     const { c, held, release } = slowGate();
     const run = c.runAsync(c.startArgs('r1'));
     expect(await until(() => held().length > 0, 60_000)).toBe(true);
-    const lock = JSON.parse(readFileSync(join(c.home, 'run.lock'), 'utf8'));
-    process.kill(lock.pid, 'SIGKILL');
+    process.kill(lockHolder(join(c.home, 'run.lock'))?.pid as number, 'SIGKILL');
     await run;
     const [old] = held() as [number];
     expect(pidAlive(old)).toBe(true);
