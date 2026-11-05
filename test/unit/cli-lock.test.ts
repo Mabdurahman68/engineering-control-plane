@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 import {
   coordinatorAlive,
   type Holder,
+  liveness,
   lockHolder,
+  procStart,
   releaseLock,
   takeLock,
 } from '../../src/cli/lock.ts';
@@ -96,6 +98,47 @@ describe('when a process cannot be inspected', () => {
     const lock = fresh();
     stale(lock);
     expect(takeLock(lock)).toBe(true);
+  });
+});
+
+describe('what counts as evidence that an owner is dead', () => {
+  const esrch = () => {
+    throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+  };
+  const eperm = () => {
+    throw Object.assign(new Error('not permitted'), { code: 'EPERM' });
+  };
+  const eagain = () => {
+    throw Object.assign(new Error('try again'), { code: 'EAGAIN' });
+  };
+  const fine = () => {};
+  const owner = { pid: 101, start: 'Mon 10:00' };
+  it.each([
+    ['the kernel says no such process', esrch, () => null, false],
+    ['the PID now belongs to a later process', fine, () => 'Mon 11:00', false],
+    ['the same process', fine, () => 'Mon 10:00', true],
+    ["another user's process, same start", eperm, () => 'Mon 10:00', true],
+    ['ps fails: exit 1, or empty output, or anything', fine, () => null, 'unknown'],
+    ["another user's process, and ps fails", eperm, () => null, 'unknown'],
+    ['the signal itself fails oddly', eagain, () => 'Mon 11:00', 'unknown'],
+  ])('%s', (_n, signal, start, expected) => {
+    expect(liveness(owner, { signal, start })).toBe(expected);
+  });
+  it.each([
+    ['ps gives no answer', { signal: fine, start: () => null }],
+    ['the signal fails oddly', { signal: eagain, start: () => null }],
+  ])('%s after the first acquisition returned: no second owner', (_n, probes) => {
+    const lock = fresh();
+    expect(takeLock(lock, { me: A, alive: () => false })).toBe(true);
+    const bWon = takeLock(lock, { me: B, alive: (h) => liveness(h, probes) });
+    assertNotForbidden(RULE, bWon, 'an inspection failure made a second owner');
+    expect(lockHolder(lock)?.pid).toBe(A.pid);
+    expect(coordinatorAlive(lock, (h) => liveness(h, probes))).toBe(true);
+  });
+  it('real ps reporting a real process stays alive, and a real dead PID is dead', () => {
+    expect(liveness({ pid: process.pid, start: procStart(process.pid) })).toBe(true);
+    expect(liveness({ pid: 999_999, start: 'long ago' })).toBe(false);
+    expect(liveness({ pid: process.pid, start: 'another time' })).toBe(false);
   });
 });
 

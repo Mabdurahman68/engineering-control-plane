@@ -117,7 +117,7 @@ A symlink from elsewhere into the fixture directory is refused too, even though 
 
 A directory of numbered claims. The owner is the highest claim whose process is alive. A takeover claims the next number with a link, which either creates it or fails, and a claimant that then isn't highest gives up. Nobody removes or replaces a claim that could be someone's, so no age check is involved. The argument is in `src/cli/lock.ts`.
 
-Liveness has three answers. Only `ps` saying there's no such process means dead: if it can't run, nothing is known, and an owner isn't unseated. So a machine where `ps` is broken refuses to start a run, rather than risk two.
+Liveness has three answers. Dead needs evidence: `kill(pid, 0)` giving `ESRCH`, or the PID now belonging to a process with another start time. An exit status or an empty answer from `ps` isn't evidence, because `ps` gives those for its own failures. Anything else is unknown, and an owner isn't unseated on unknown. So a machine where `ps` is broken refuses to start a run, rather than risk two.
 
 ## Evidence for a semantic claim
 

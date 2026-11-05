@@ -22,27 +22,50 @@ import { join } from 'node:path';
 
 export type Holder = { pid: number; start: string | null };
 
-// Three answers, not two. Only `ps` saying there's no such process means dead: if it couldn't run, or
-// failed some other way, nothing is known, and an owner mustn't be unseated on that.
-type Started = { known: true; start: string | null } | { known: false };
+// What's asked of the OS, apart so a test can make each answer happen.
+export type Probes = {
+  // Signal 0: delivers nothing. Throws ESRCH only if there's no such process.
+  signal: (pid: number) => void;
+  // A start time, or null when `ps` gave no usable answer, for any reason.
+  start: (pid: number) => string | null;
+};
 
-function inspect(pid: number): Started {
-  try {
-    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return { known: true, start: out.trim() || null };
-  } catch (err) {
-    return (err as { status?: number }).status === 1
-      ? { known: true, start: null }
-      : { known: false };
-  }
-}
+const REAL: Probes = {
+  signal: (pid) => {
+    process.kill(pid, 0);
+  },
+  start: (pid) => {
+    try {
+      const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return out.trim() || null;
+    } catch {
+      return null;
+    }
+  },
+};
 
 export function procStart(pid: number): string | null {
-  const r = inspect(pid);
-  return r.known ? r.start : null;
+  return REAL.start(pid);
+}
+
+export type Liveness = boolean | 'unknown';
+
+// Dead needs evidence: the kernel saying there's no such process, or the PID now belonging to a process
+// that started at another time. An exit status or an empty answer from `ps` is neither, since `ps` gives
+// those for its own failures too. Anything short of evidence is unknown, and unknown keeps the owner.
+export function liveness(h: Holder, probes: Probes = REAL): Liveness {
+  try {
+    probes.signal(h.pid);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if ((err as NodeJS.ErrnoException).code !== 'EPERM') return 'unknown';
+  }
+  const start = probes.start(h.pid);
+  if (start === null) return 'unknown';
+  return start === h.start;
 }
 
 function claims(dir: string): number[] {
@@ -62,21 +85,13 @@ function readClaim(dir: string, n: number): Holder | null {
   }
 }
 
-export type Liveness = boolean | 'unknown';
-
-function isAlive(h: Holder): Liveness {
-  const r = inspect(h.pid);
-  if (!r.known) return 'unknown';
-  return r.start !== null && r.start === h.start;
-}
-
 export function lockHolder(dir: string): Holder | null {
   const highest = claims(dir).at(-1);
   return highest === undefined ? null : readClaim(dir, highest);
 }
 
 // An owner that can't be ruled out counts as alive.
-export function coordinatorAlive(dir: string, alive: (h: Holder) => Liveness = isAlive): boolean {
+export function coordinatorAlive(dir: string, alive: (h: Holder) => Liveness = liveness): boolean {
   const h = lockHolder(dir);
   return h !== null && alive(h) !== false;
 }
@@ -91,7 +106,7 @@ export function takeLock(
     afterLink?: () => void;
   } = {},
 ): boolean {
-  const alive = o.alive ?? isAlive;
+  const alive = o.alive ?? ((h: Holder) => liveness(h));
   const me = o.me ?? { pid: process.pid, start: procStart(process.pid) };
   // A claim with no start time could never be told from a reused PID. Better no claim.
   if (me.start === null) return false;
