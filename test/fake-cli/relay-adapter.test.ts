@@ -8,7 +8,7 @@ import {
   relayEnv,
   type CliKind,
 } from '../../src/workers/relay/adapter.ts';
-import { fakeRequest, fakeWorld, pidAlive, until } from '../support/fake-cli.ts';
+import { fakeRequest, fakeWorld, loggedWorkers, pidAlive, until } from '../support/fake-cli.ts';
 import { tempDir } from '../support/repo.ts';
 
 const policy = loadPolicy(resolve('policy'));
@@ -80,12 +80,12 @@ describe.each(KINDS)('%s through its real relay', (kind) => {
     const a = adapterFor(kind);
     const req = fakeRequest(tempDir('ecp-attempt-'));
     const h = await a.dispatch(req);
-    await new Promise((r) => setTimeout(r, 1000));
+    // Not a fixed wait: under load the relay's preflight can take seconds.
+    expect(await until(() => loggedWorkers(w.home).length > 0, 30_000)).toBe(true);
     await a.cancel(h);
     const raw = await a.wait(h);
     expect(raw.cancelled_by_us).toBe(true);
-    const log = readFileSync(join(w.home, 'fake-cli-calls.log'), 'utf8').trim().split('\n');
-    const pid = JSON.parse(log[0] as string).pid;
+    const pid = (loggedWorkers(w.home)[0] as { pid: number }).pid;
     // The relay ends the group as it goes, so the child can outlast it by a moment.
     expect(await until(() => !pidAlive(pid), 10_000)).toBe(true);
   }, 40_000);
