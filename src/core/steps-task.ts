@@ -454,9 +454,19 @@ function pickAfterFailure(
 
 // --- Gating ----------------------------------------------------------------------------------------
 
+function lineageOf(e: Engine, t: TaskRec, seen = new Set<string>()): Set<string> {
+  if (seen.has(t.task_id)) return seen;
+  seen.add(t.task_id);
+  for (const d of t.spec.depends_on) if (e.s.tasks[d]) lineageOf(e, e.s.tasks[d], seen);
+  return seen;
+}
+
+// A waiver covers this task and any task built on the one it was ruled for: the same failure, from
+// the same code. It's matched by signature element all the same.
 function gateWaiversFor(e: Engine, t: TaskRec) {
+  const lineage = lineageOf(e, t);
   return e.s.waivers
-    .filter((w: any) => w.kind === 'gate' && w.scope === t.task_id)
+    .filter((w: any) => w.kind === 'gate' && lineage.has(w.scope))
     .map((w: any) => ({
       gate_id: w.resolves.gate_id,
       signature_element: w.resolves.signature_element,

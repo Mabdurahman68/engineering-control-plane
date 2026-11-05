@@ -937,15 +937,17 @@ export class Engine {
   }
 
   noWorkerReason(): string {
-    const reviewable = Object.values(this.s.tasks).some(
-      (t) => t.next_step === 'work' || t.next_step === 'repair',
-    );
-    const stranded =
-      reviewable &&
-      Object.keys(this.p.policy.workers.rungs).every(
-        (r) => !this.rungAvailable(r) || rungWouldStrandReview(this.s, this.p.policy, r),
-      );
-    return stranded ? 'NO_REVIEWER_FAMILY' : 'no eligible worker';
+    // Stranded means a rung is up, and taking it would leave no family to review the result.
+    for (const t of Object.values(this.s.tasks)) {
+      if (t.next_step !== 'work' && t.next_step !== 'repair') continue;
+      if (t.state !== 'TASK_WAITING_WORKER' && t.state !== 'READY') continue;
+      const ladder = this.p.policy.workers.ladders[t.spec.lane as 'implementation'] ?? [];
+      if (
+        ladder.some((r) => this.rungAvailable(r) && rungWouldStrandReview(this.s, this.p.policy, r))
+      )
+        return 'NO_REVIEWER_FAMILY';
+    }
+    return 'no eligible worker';
   }
 
   private escalatedWithNoneActive(): boolean {
