@@ -58,7 +58,8 @@ export function rungWouldStrandReview(s: RunR, policy: PolicyBundle, rung: strin
 
 export function openWriters(s: RunR): number {
   return Object.values(s.attempts).filter(
-    (a) => a.mode === 'write' && !a.finished && !a.fenced && a.step !== 'plan',
+    // Until it's classified, its consequences (a quarantine, say) aren't on record for the next pick.
+    (a) => a.mode === 'write' && a.class === null && !a.fenced,
   ).length;
 }
 

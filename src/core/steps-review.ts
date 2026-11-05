@@ -29,6 +29,8 @@ export function holdFor(
     e.setWake(hold.not_before);
     return { rung: hold.rung, waiting: true };
   }
+  // Due, but only if the rung is still usable. A held rung gets no exemption from the checks.
+  if (!e.rungAvailable(hold.rung)) return null;
   return { rung: hold.rung, waiting: false };
 }
 
@@ -138,7 +140,7 @@ export async function awaitReadStep(
   }
   const cls: FailureClass = raw.spawn_failed ? 'UNKNOWN' : e.classifyRaw(a, raw);
   if (cls !== 'OK') {
-    failReadStep(e, t, a, cls, null);
+    failReadStep(e, t, a, cls, raw.stated_reset_ms ?? null);
     return { kind: 'failed' };
   }
   return { kind: 'ok', raw };

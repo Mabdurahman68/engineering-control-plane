@@ -631,6 +631,9 @@ export class Engine {
       return;
     }
     if (opts.decision) this.applyDecision(opts.decision);
+    // A pause request made while paused changes nothing, and doesn't outlive the pause.
+    if (PAUSED.includes(this.s.state) && this.p.readControl()?.request === 'pause')
+      this.p.clearControl();
     if (PAUSED.includes(this.s.state)) {
       const to = this.s.resume_to ?? 'EXECUTING';
       this.draining = null;
@@ -897,8 +900,19 @@ export class Engine {
 
   // While a cap holds, nothing new starts. Finished work is still collected and recorded.
   private async drainStep(): Promise<boolean> {
-    if (this.s.state === 'EXECUTING' || this.s.state === 'INTEGRATING') return stepTasks(this);
-    return false;
+    // Handlers respect the cap: they collect and record, and start nothing new.
+    switch (this.s.state) {
+      case 'PLANNING':
+        return stepPlanning(this);
+      case 'EXECUTING':
+        return stepTasks(this);
+      case 'INTEGRATING':
+        return stepIntegrating(this);
+      case 'VERIFYING':
+        return stepVerifying(this);
+      default:
+        return false;
+    }
   }
 
   afterTasks(): boolean {
@@ -912,7 +926,7 @@ export class Engine {
 
   // Rule 6, or a hole. A hole is a defect, and the fuzz exists to find it.
   pauseIfStuck(): boolean {
-    if (this.anyInflight() || this.wakeAt !== null) return false;
+    if (this.draining || this.anyInflight() || this.wakeAt !== null) return false;
     const tasks = Object.values(this.s.tasks);
     const waiting = tasks.some(
       (t) =>

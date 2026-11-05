@@ -870,6 +870,11 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.extend_budget) s.extended_budget += d.extend_budget;
       s.run_skip_rungs = [];
       for (const t of Object.values(s.tasks)) t.skip_rungs = [];
+      // A resume is how an owner says they signed back in. Eligibility re-checks it, and a rung that's
+      // still out fails again. A rung that broke read-only stays out for the run.
+      for (const [rung, q] of Object.entries(s.quarantine)) {
+        if (q.reason === 'AUTH') delete s.quarantine[rung];
+      }
       return;
     case 'heartbeat':
       s.last_heartbeat_at = ev.at;

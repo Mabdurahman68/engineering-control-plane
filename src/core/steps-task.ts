@@ -190,7 +190,10 @@ async function stepDispatching(e: Engine, t: TaskRec): Promise<boolean> {
   if (e.draining) return false;
   const ladder = ladderOf(e, t);
   await e.refreshHealth(ladder);
-  const rung = hold ? hold.rung : e.pickWriter(ladder, skipListFor(e, t, step), t.rung);
+  const skip = skipListFor(e, t, step);
+  const rung =
+    (hold ? e.pickWriter([hold.rung], skip, hold.rung) : null) ??
+    e.pickWriter(ladder, skip, t.rung);
   if (!rung) {
     e.taskTo(t, 'COLLECTING', 'spawn_failed');
     e.taskTo(t, 'TASK_WAITING_WORKER', 'failure_no_rung', { next_step: step });
@@ -307,7 +310,7 @@ async function stepCollecting(e: Engine, t: TaskRec): Promise<boolean> {
     else cls = 'MALFORMED';
   }
   if (cls === 'OK') return recordSnapshot(e, t, a, report as WorkerReport, raw);
-  return handleWorkerFailure(e, t, a, cls);
+  return handleWorkerFailure(e, t, a, cls, raw.stated_reset_ms ?? null);
 }
 
 async function recordSnapshot(
@@ -370,7 +373,13 @@ async function recordSnapshot(
   return true;
 }
 
-function handleWorkerFailure(e: Engine, t: TaskRec, a: AttemptRec, cls: FailureClass): boolean {
+async function handleWorkerFailure(
+  e: Engine,
+  t: TaskRec,
+  a: AttemptRec,
+  cls: FailureClass,
+  statedReset: number | null,
+): Promise<boolean> {
   if (cls === 'CANCELLED') {
     e.append('dispatch.classified', t.task_id, { attempt_id: a.attempt_id, class: cls });
     e.releaseIfUnretained(a);
@@ -398,13 +407,22 @@ function handleWorkerFailure(e: Engine, t: TaskRec, a: AttemptRec, cls: FailureC
       return true;
     }
   }
-  const plan = e.planFailure(cls, a, seen, null);
+  const plan = e.planFailure(cls, a, seen, statedReset);
   if (plan.salvage && t.worktree) {
-    e.p.store.write(`salvage/${t.task_id}-${a.n}.patch.intent`, a.attempt_id);
+    // Evidence, never integrated. The next attempt gets a new directory, so a surviving writer can
+    // change only the tree it had open.
+    const path = `salvage/${t.task_id}-${a.n}.patch`;
+    let patch = '';
+    try {
+      patch = await e.p.git.salvage(t.worktree, resetPoint(t));
+    } catch {
+      patch = '';
+    }
+    e.p.store.write(path, patch);
     e.append('worktree.salvaged', t.task_id, {
       attempt_id: a.attempt_id,
       new_dir: true,
-      path: `salvage/${t.task_id}-${a.n}.patch`,
+      path,
       old: t.worktree,
     });
   }
@@ -914,6 +932,27 @@ function filledSlots(t: TaskRec, tree: string) {
   return t.reviews.filter((r) => r.tree === tree && r.effective === 'PASS');
 }
 
+// One rule for "is there a reviewer", used by the step and by the wait, so they can't disagree.
+function pickTaskReviewer(e: Engine, t: TaskRec): string | null {
+  const snap = lastSnapshot(t);
+  const used = snap ? filledSlots(t, snap.tree).map((r) => r.rung) : [];
+  return e.pickReader(e.p.policy.workers.ladders.review, authorsOfTask(e.s, t.task_id), [
+    ...skipListFor(e, t, 'review'),
+    ...used,
+  ]);
+}
+
+function adjudicatorExclusions(e: Engine, t: TaskRec, d: any): string[] {
+  const authors = t.is_integration
+    ? [...new Set([...e.authorsIntegrated(), ...authorsOfTask(e.s, t.task_id)])]
+    : authorsOfTask(e.s, t.task_id);
+  const filerFamily = e.rung(d.filed_by) ? e.family(d.filed_by) : null;
+  const reviewerFamilies = d.subject.review_id
+    ? t.reviews.filter((r) => r.review_id === d.subject.review_id).map((r) => r.family)
+    : [];
+  return [...new Set([...authors, ...(filerFamily ? [filerFamily] : []), ...reviewerFamilies])];
+}
+
 async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
   const snap = lastSnapshot(t);
   if (!snap) throw new InvariantViolation(`${t.task_id} reached REVIEWING with no snapshot`);
@@ -964,13 +1003,7 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
   await e.refreshHealth(e.p.policy.workers.ladders.review);
   const hold = holdFor(e, t, 'review');
   if (hold?.waiting) return false;
-  const usedRungs = filledSlots(t, snap.tree).map((r) => r.rung);
-  const rung = hold
-    ? hold.rung
-    : e.pickReader(e.p.policy.workers.ladders.review, authors, [
-        ...skipListFor(e, t, 'review'),
-        ...usedRungs,
-      ]);
+  const rung = hold ? hold.rung : pickTaskReviewer(e, t);
   if (!rung) {
     e.taskTo(t, 'TASK_WAITING_WORKER', 'no_compliant_rung', { next_step: 'review' });
     return true;
@@ -1328,16 +1361,7 @@ async function stepDisagreement(e: Engine, t: TaskRec): Promise<boolean> {
       return true;
     }
     if (e.draining) return false;
-    const authors = t.is_integration
-      ? [...new Set([...e.authorsIntegrated(), ...authorsOfTask(e.s, t.task_id)])]
-      : authorsOfTask(e.s, t.task_id);
-    const filerFamily = e.rung(d.filed_by) ? e.family(d.filed_by) : null;
-    const reviewerFamilies = d.subject.review_id
-      ? t.reviews.filter((r) => r.review_id === d.subject.review_id).map((r) => r.family)
-      : [];
-    const excluded = [
-      ...new Set([...authors, ...(filerFamily ? [filerFamily] : []), ...reviewerFamilies]),
-    ];
+    const excluded = adjudicatorExclusions(e, t, d);
     const ladder = e.p.policy.workers.ladders.adjudication;
     if (!e.anyFamilyCouldQualify(ladder, excluded))
       return escalateUnresolved(e, t, d, 'no family could qualify as adjudicator');
@@ -1478,12 +1502,7 @@ async function stepWaiting(e: Engine, t: TaskRec): Promise<boolean> {
     return true;
   }
   if (t.next_step === 'review') {
-    const rung = e.pickReader(
-      e.p.policy.workers.ladders.review,
-      authorsOfTask(e.s, t.task_id),
-      skipListFor(e, t, 'review'),
-    );
-    if (!rung) return false;
+    if (!pickTaskReviewer(e, t)) return false;
     e.taskTo(t, 'REVIEWING', 'eligible_review');
     return true;
   }
@@ -1493,12 +1512,17 @@ async function stepWaiting(e: Engine, t: TaskRec): Promise<boolean> {
     return true;
   }
   if (t.next_step === 'adjudicate') {
-    const rung = e.pickReader(
-      e.p.policy.workers.ladders.adjudication,
-      authorsOfTask(e.s, t.task_id),
-      skipListFor(e, t, 'adjudicate'),
-    );
-    if (!rung) return false;
+    const d = pendingDisagreements(e, t)[0];
+    // No pending record means the ruling is in and only routing is left, which needs no worker.
+    if (
+      d &&
+      !e.pickReader(
+        e.p.policy.workers.ladders.adjudication,
+        adjudicatorExclusions(e, t, d),
+        skipListFor(e, t, 'adjudicate'),
+      )
+    )
+      return false;
     e.taskTo(t, 'TASK_DISAGREEMENT', 'eligible_adjudicate');
     return true;
   }

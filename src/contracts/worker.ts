@@ -51,6 +51,8 @@ export type RawOutcome = {
   transport_provenance: 'mock' | 'fake_cli' | 'real';
   cancelled_by_us: boolean;
   spawn_failed?: boolean;
+  // A reset time the CLI stated, when it stated one. Never invented.
+  stated_reset_ms?: number | null;
 };
 
 export type DispatchRecord = {

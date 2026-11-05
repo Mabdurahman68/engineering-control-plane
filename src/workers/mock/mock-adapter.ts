@@ -268,9 +268,9 @@ export class MockAdapter implements WorkerAdapter {
       case 'exit_nonzero':
         return fail(args?.stderr ?? 'failed', args?.code ?? 1);
       case 'rate_limit':
-        return fail('HTTP 429 rate limit');
+        return { ...fail('HTTP 429 rate limit'), stated_reset_ms: args?.reset_at ?? null };
       case 'quota':
-        return fail('usage limit reached');
+        return { ...fail('usage limit reached'), stated_reset_ms: args?.reset_at ?? null };
       case 'auth':
         return fail('not authenticated');
       case 'outage':
@@ -619,7 +619,9 @@ export class MockAdapter implements WorkerAdapter {
           return run.resolveNow(
             outcome({ relay_status: null, exit_code: null, result_present: false }),
           );
-        run.resolveNow(await this.perform(req, step, behaviour));
+        const out = await this.perform(req, step, behaviour);
+        if (step?.usage) out.usage = { ...USAGE, ...step.usage };
+        run.resolveNow(out);
       })().catch((err) =>
         run.resolveNow(outcome({ relay_status: 'failed', exit_code: 1, stderr_tail: String(err) })),
       );
