@@ -83,6 +83,17 @@ async function stepTask(e: Engine, t: TaskRec): Promise<boolean> {
       return stepDisagreement(e, t);
     case 'TASK_WAITING_WORKER':
       return stepWaiting(e, t);
+    case 'TASK_PASSED':
+      // After a risk rise, work that isn't merged is held to the stricter profile.
+      if (
+        !t.is_integration &&
+        t.passed_risk !== e.s.risk &&
+        !e.s.integration.merged.includes(t.task_id)
+      ) {
+        e.taskTo(t, 'REVIEWING', 'risk_raised', { next_step: 'review' });
+        return true;
+      }
+      return false;
     default:
       return false;
   }
@@ -470,6 +481,17 @@ export function trimResults(results: GateResult[]) {
   }));
 }
 
+// The rule that raises risk runs on the changed files as soon as the gate run is on the ledger.
+function applyDiffRisk(e: Engine, t: TaskRec, changed: { path: string }[]) {
+  e.raiseRisk(
+    ruleRisk(
+      e.p.policy.riskRules,
+      changed.map((f) => f.path),
+    ),
+    `diff of ${t.task_id}`,
+  );
+}
+
 async function stepGating(e: Engine, t: TaskRec): Promise<boolean> {
   if (e.draining) return false;
   const snap = lastSnapshot(t);
@@ -550,6 +572,7 @@ async function stepGating(e: Engine, t: TaskRec): Promise<boolean> {
     results: trimResults(out.results),
     changed: out.changed,
   });
+  applyDiffRisk(e, t, out.changed);
   const fresh = e.s.tasks[t.task_id];
   const failed = out.results.filter((r) => r.status === 'FAIL');
   const refs = { signatures: failed.map((r) => r.signature ?? r.id) };
@@ -905,60 +928,9 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
       specSha: reviewSpecSha(e),
     });
     if (!reviewed) return true;
-    const refs = { fingerprints: reviewed.findings.map((f: any) => f.fingerprint) };
     const after = e.s.tasks[t.task_id];
-    const sameTree = after.reviews.filter((r) => r.tree === snap.tree);
-    const verdicts = new Set(sameTree.slice(-e.quorum()).map((r) => r.effective));
-    if (e.quorum() > 1 && sameTree.length >= 2 && verdicts.size > 1) {
-      openDisagreement(e, after, {
-        kind: 'REVIEWER_REVIEWER',
-        gate_id: null,
-        review_id: reviewed.review.review_id,
-        code_result: 'PASS',
-        agent_position: 'REVIEWERS_SPLIT',
-        filed_by: a.rung,
-        reason: 'required reviewers disagree',
-        requested_action: 'OVERRIDE_FINDING',
-        keys: [`split:${snap.tree}`],
-      });
-      e.decide(
-        'DP-REVIEW',
-        after,
-        'adjudicate',
-        after.task_id,
-        'REVIEWING',
-        'TASK_DISAGREEMENT',
-        refs,
-        snap.tree,
-      );
-      e.taskTo(after, 'TASK_DISAGREEMENT', 'reviewers_split', { next_step: 'adjudicate' });
-      return true;
-    }
-    if (reviewed.effective === 'FAIL') {
-      openDisagreement(e, after, {
-        kind: 'MECHANICAL_PASS_SEMANTIC_FAIL',
-        gate_id: null,
-        review_id: reviewed.review.review_id,
-        code_result: 'PASS',
-        agent_position: 'REVIEW_FAILED',
-        filed_by: a.rung,
-        reason: 'review FAIL after gates passed',
-        requested_action: 'REPAIR',
-        status: 'ROUTED_TO_REPAIR',
-      });
-      e.decide(
-        'DP-REVIEW',
-        after,
-        'repair',
-        after.task_id,
-        'REVIEWING',
-        'REPAIR_PENDING',
-        refs,
-        snap.tree,
-      );
-      e.taskTo(after, 'REPAIR_PENDING', 'review_failed', { next_step: 'repair' });
-      return true;
-    }
+    if (routeReview(e, after, snap.tree, reviewed.review.review_id)) return true;
+    const refs = { fingerprints: reviewed.findings.map((f: any) => f.fingerprint) };
     const passedAll = filledSlots(after, snap.tree).length >= e.quorum();
     e.decide(
       'DP-REVIEW',
@@ -972,7 +944,7 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
     );
     return true;
   }
-  // A FAIL that was recorded, but the crash fell before it was routed.
+  // A FAIL that was recorded, but the crash fell before it was routed. Same policy either way.
   const lastReview = t.reviews[t.reviews.length - 1];
   if (
     lastReview &&
@@ -980,18 +952,7 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
     lastReview.effective === 'FAIL' &&
     !lastReview.routed
   ) {
-    e.decide(
-      'DP-REVIEW',
-      t,
-      'repair',
-      t.task_id,
-      'REVIEWING',
-      'REPAIR_PENDING',
-      { fingerprints: lastReview.fingerprints },
-      snap.tree,
-    );
-    e.taskTo(t, 'REPAIR_PENDING', 'review_failed', { next_step: 'repair' });
-    return true;
+    if (routeReview(e, t, snap.tree, lastReview.review_id)) return true;
   }
   if (filledSlots(t, snap.tree).length >= e.quorum()) return completeTask(e, t);
   if (e.capBlocks()) return false;
@@ -1036,6 +997,48 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
   });
   await e.spawnAttempt(na, { acs: t.spec.acceptance_criteria, files });
   return true;
+}
+
+// One policy for a recorded review, from a live collection or a replay. Returns true if it moved.
+function routeReview(e: Engine, t: TaskRec, tree: string, reviewId: string): boolean {
+  const review = t.reviews.find((r) => r.review_id === reviewId);
+  if (!review) throw new InvariantViolation(`no review ${reviewId} on ${t.task_id}`);
+  const refs = { fingerprints: review.fingerprints };
+  const sameTree = t.reviews.filter((r) => r.tree === tree);
+  const verdicts = new Set(sameTree.slice(-e.quorum()).map((r) => r.effective));
+  if (e.quorum() > 1 && sameTree.length >= 2 && verdicts.size > 1) {
+    openDisagreement(e, t, {
+      kind: 'REVIEWER_REVIEWER',
+      gate_id: null,
+      review_id: reviewId,
+      code_result: 'PASS',
+      agent_position: 'REVIEWERS_SPLIT',
+      filed_by: review.rung,
+      reason: 'required reviewers disagree',
+      requested_action: 'OVERRIDE_FINDING',
+      keys: [`split:${tree}`],
+    });
+    e.decide('DP-REVIEW', t, 'adjudicate', t.task_id, 'REVIEWING', 'TASK_DISAGREEMENT', refs, tree);
+    e.taskTo(t, 'TASK_DISAGREEMENT', 'reviewers_split', { next_step: 'adjudicate' });
+    return true;
+  }
+  if (review.effective === 'FAIL') {
+    openDisagreement(e, t, {
+      kind: 'MECHANICAL_PASS_SEMANTIC_FAIL',
+      gate_id: null,
+      review_id: reviewId,
+      code_result: 'PASS',
+      agent_position: 'REVIEW_FAILED',
+      filed_by: review.rung,
+      reason: 'review FAIL after gates passed',
+      requested_action: 'REPAIR',
+      status: 'ROUTED_TO_REPAIR',
+    });
+    e.decide('DP-REVIEW', t, 'repair', t.task_id, 'REVIEWING', 'REPAIR_PENDING', refs, tree);
+    e.taskTo(t, 'REPAIR_PENDING', 'review_failed', { next_step: 'repair' });
+    return true;
+  }
+  return false;
 }
 
 async function completeTask(e: Engine, t: TaskRec): Promise<boolean> {
@@ -1090,28 +1093,7 @@ async function completeTask(e: Engine, t: TaskRec): Promise<boolean> {
   e.append('commit.done', t.task_id, { commit, tree: snap.tree });
   e.taskTo(t, 'TASK_PASSED', 'review_passed', { commit });
   if (previous && previous !== commit) resetDependents(e, t.task_id);
-  applyDiffRisk(e, t, commit);
   return true;
-}
-
-export function applyDiffRisk(e: Engine, t: TaskRec, _commit: string) {
-  const run = [...t.gate_runs].reverse().find((g) => g.changed);
-  const paths = (run?.changed ?? []).map((f) => f.path);
-  const risk = ruleRisk(e.p.policy.riskRules, paths);
-  if (e.raiseRisk(risk, `diff of ${t.task_id}`)) reopenPassed(e);
-}
-
-// After a risk rise, work that isn't merged is held to the stricter profile.
-export function reopenPassed(e: Engine) {
-  for (const x of Object.values(e.s.tasks)) {
-    if (
-      x.state === 'TASK_PASSED' &&
-      !x.is_integration &&
-      !e.s.integration.merged.includes(x.task_id)
-    ) {
-      e.taskTo(x, 'REVIEWING', 'risk_raised', { next_step: 'review' });
-    }
-  }
 }
 
 function resetDependents(e: Engine, taskId: string) {
@@ -1131,22 +1113,19 @@ function resetDependents(e: Engine, taskId: string) {
 
 async function stepRepairPending(e: Engine, t: TaskRec): Promise<boolean> {
   if (e.draining) return false;
-  // Requested before a crash: charged once already, so go straight on.
+  // Requested before a crash: charged once already, so go straight on. A required rung switch holds:
+  // the stalled rung is on the skip list, so with no alternate the task waits.
   if (t.repair_requested) {
     const switching = t.stall_at === t.attempts && t.stalls > 0;
+    if (!switching) {
+      e.taskTo(t, 'DISPATCHING', 'repair_dispatch', { next_step: 'repair' });
+      return true;
+    }
     const ladder = ladderOf(e, t);
     await e.refreshHealth(ladder);
-    const rung = switching
-      ? e.pickWriter(
-          ladder.filter((r) => r !== t.rung),
-          skipListFor(e, t, 'repair'),
-          null,
-        )
-      : null;
-    e.taskTo(t, 'DISPATCHING', switching ? 'repair_next_rung' : 'repair_dispatch', {
-      next_step: 'repair',
-      ...(rung ? { rung } : {}),
-    });
+    const rung = e.pickWriter(ladder, skipListFor(e, t, 'repair'), null);
+    if (rung) e.taskTo(t, 'DISPATCHING', 'repair_next_rung', { next_step: 'repair', rung });
+    else e.taskTo(t, 'TASK_WAITING_WORKER', 'no_alternate', { next_step: 'repair' });
     return true;
   }
   const limit = t.repairs >= e.profile().repair_max;
@@ -1182,7 +1161,9 @@ async function stepRepairPending(e: Engine, t: TaskRec): Promise<boolean> {
       });
       return true;
     }
-    if (!counted) e.append('stall.detected', t.task_id, { reason, second: false });
+    // The stalled rung goes on the skip list with the stall itself, in one durable event.
+    if (!counted)
+      e.append('stall.detected', t.task_id, { reason, second: false, stalled_rung: t.rung });
     const fresh = e.s.tasks[t.task_id];
     const ladder = ladderOf(e, fresh);
     await e.refreshHealth(ladder);

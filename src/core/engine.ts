@@ -536,29 +536,19 @@ export class Engine {
     nextRung: string | null,
     keepDiff = false,
   ) {
-    if (plan.backoff_until !== null) {
-      this.append('backoff.started', a.task_id, {
-        rung: a.rung,
-        until: plan.backoff_until,
-        tries: plan.backoff_tries,
-      });
-    }
-    if (plan.quarantine_until !== null) {
-      this.append('worker.quarantined', a.task_id, {
-        rung: a.rung,
-        until: plan.quarantine_until === 'run' ? null : plan.quarantine_until,
-        reason: plan.quarantine_reason,
-        scope: plan.quarantine_until === 'run' ? 'run' : 'time',
-      });
-    }
-    if (plan.flag_owner) {
-      const ok = this.safeNotify('AUTH', `${a.rung}: authentication failed`);
-      this.append(ok ? 'notification.sent' : 'notification.failed', a.task_id, {
-        kind: 'AUTH',
-        rung: a.rung,
-      });
-    }
+    const backoff =
+      plan.backoff_until !== null ? { until: plan.backoff_until, tries: plan.backoff_tries } : null;
+    const quarantine =
+      plan.quarantine_until !== null
+        ? {
+            until: plan.quarantine_until === 'run' ? null : plan.quarantine_until,
+            reason: plan.quarantine_reason,
+            scope: plan.quarantine_until === 'run' ? 'run' : 'time',
+          }
+        : null;
     this.append('fallback.taken', a.task_id, {
+      backoff,
+      quarantine,
       attempt_id: a.attempt_id,
       from: a.rung,
       to: plan.retry_same ? a.rung : (nextRung ?? 'none'),
@@ -570,6 +560,16 @@ export class Engine {
       skip: plan.retry_same ? null : `${a.step}:${a.rung}`,
       keep_diff: keepDiff,
     });
+    // Evidence only, after the state change. Applied again on replay, the values are the same.
+    if (backoff) this.append('backoff.started', a.task_id, { rung: a.rung, ...backoff });
+    if (quarantine) this.append('worker.quarantined', a.task_id, { rung: a.rung, ...quarantine });
+    if (plan.flag_owner) {
+      const ok = this.safeNotify('AUTH', `${a.rung}: authentication failed`);
+      this.append(ok ? 'notification.sent' : 'notification.failed', a.task_id, {
+        kind: 'AUTH',
+        rung: a.rung,
+      });
+    }
   }
 
   anyInflight(): boolean {

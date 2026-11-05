@@ -469,6 +469,82 @@ describe('crash boundaries found at MIDPOINT re-review', () => {
   });
 });
 
+describe('crash boundaries found at MIDPOINT re-review 3', () => {
+  it('a task-level split replayed after a crash still reaches the owner', async () => {
+    const script: any[] = [
+      {
+        match: { task: 'T1', step: 'review', rung: 'mock-anthropic' },
+        behaviour: 'reviewer_pass',
+        times: 1,
+      },
+      {
+        match: { task: 'T1', step: 'review', rung: 'mock-glm' },
+        behaviour: 'reviewer_fail',
+        times: 1,
+      },
+    ];
+    const sim = makeSim({
+      script,
+      spec: { declared_risk: 'critical', requested_depth: 'EXHAUSTIVE' },
+    });
+    let armed = true;
+    sim.failFn = (n) => {
+      const rec = sim.engine.s.tasks.T1;
+      if (armed && n === 'after:dispatch.classified' && rec?.reviews.at(-1)?.effective === 'FAIL') {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('ESCALATION_REQUIRED');
+    expect(Object.values<any>(sim.engine.s.escalations)[0].reason).toBe('UNRESOLVED_DISAGREEMENT');
+    expect(
+      Object.values<any>(sim.engine.s.disagreements).some((d) => d.kind === 'REVIEWER_REVIEWER'),
+    ).toBe(true);
+  });
+  it('a stalled rung stays off the list after a crash, and with no alternate the task waits', async () => {
+    const script: any[] = [
+      { match: { task: 'T1', step: 'review' }, behaviour: 'reviewer_fail' },
+      { match: { task: 'T1', step: 'repair' }, behaviour: 'no_change' },
+    ];
+    const sim = makeSim({ script });
+    let armed = true;
+    sim.failFn = (n) => {
+      if (armed && n === 'after:repair.requested' && sim.engine.s.tasks.T1.stalls === 1) {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const stalled = sim.engine.s.tasks.T1.rung as string;
+    const before = sim.adapter.log.filter((x) => x.task === 'T1' && x.step === 'repair').length;
+    for (const r of Object.keys(sim.policy.workers.rungs))
+      if (r !== stalled) sim.adapter.setProbe(r, 'not_installed');
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('PAUSED_NO_WORKER');
+    expect(sim.adapter.log.filter((x) => x.task === 'T1' && x.step === 'repair').length).toBe(
+      before,
+    );
+    expect(sim.engine.s.tasks.T1.state).toBe('TASK_WAITING_WORKER');
+  });
+  it('a crash during a rate-limit fallback counts one backoff', async () => {
+    const script: any[] = [
+      { match: { task: 'T1', step: 'work' }, behaviour: 'rate_limit', times: 1 },
+    ];
+    for (const point of ['after:fallback.taken', 'after:backoff.started']) {
+      const { sim } = await crashAfter(point, script);
+      await resumeSim(sim);
+      const tries = Object.values<any>(sim.engine.s.backoff).map((b) => b.tries);
+      expect(tries, point).toEqual([1]);
+    }
+  });
+});
+
 describe('crash boundaries found at MIDPOINT re-review 2', () => {
   const armOn = (sim: ReturnType<typeof makeSim>, when: (name: string) => boolean) => {
     let armed = true;

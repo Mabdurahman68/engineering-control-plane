@@ -13,7 +13,9 @@ export type StepOutcome = { kind: 'wait' } | { kind: 'failed' } | { kind: 'ok'; 
 
 export function skipListFor(e: Engine, t: TaskRec | null, step: string): string[] {
   const list = t ? t.skip_rungs : e.s.run_skip_rungs;
-  return list.filter((k) => k.startsWith(`${step}:`)).map((k) => k.slice(step.length + 1));
+  const skip = list.filter((k) => k.startsWith(`${step}:`)).map((k) => k.slice(step.length + 1));
+  // A rung that stalled stays off this task's repairs, across a resume, until a reset.
+  return step === 'repair' && t ? [...skip, ...t.stalled_rungs] : skip;
 }
 
 export function holdFor(
@@ -112,13 +114,10 @@ export async function awaitReadStep(
   }
   if (!unchanged) {
     if (!e.s.attempts[a.attempt_id].fallback_applied) {
-      e.append('worker.quarantined', a.task_id, {
-        rung: a.rung,
-        until: null,
-        reason: 'checkout tree changed',
-        scope: 'run',
-      });
+      const quarantine = { until: null, reason: 'checkout tree changed', scope: 'run' };
       e.append('fallback.taken', a.task_id, {
+        quarantine,
+        attempt_id: a.attempt_id,
         from: a.rung,
         to: 'none',
         class: 'UNKNOWN',
@@ -127,8 +126,8 @@ export async function awaitReadStep(
         next_rung: false,
         not_before: null,
         skip: `${a.step}:${a.rung}`,
-        attempt_id: a.attempt_id,
       });
+      e.append('worker.quarantined', a.task_id, { rung: a.rung, ...quarantine });
     }
     e.append('dispatch.classified', a.task_id, {
       attempt_id: a.attempt_id,

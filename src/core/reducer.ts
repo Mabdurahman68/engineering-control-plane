@@ -84,7 +84,13 @@ export type TaskRec = {
   gate_runs: GateRun[];
   reviews: ReviewRec[];
   open_findings: unknown[];
-  stall_history: { tree: string | null; signature: string | null; stall_keys: string[] }[];
+  stall_history: {
+    n: number;
+    tree: string | null;
+    signature: string | null;
+    stall_keys: string[];
+  }[];
+  stalled_rungs: string[];
   adjudications: number;
   adjudicated: string[];
   reasked: Record<string, number>;
@@ -107,6 +113,7 @@ export type TaskRec = {
   // Durable markers, so a crash between an event and its transition can't charge anything twice.
   repair_requested: boolean;
   stall_at: number | null;
+  passed_risk: string | null;
 };
 
 export type GateRun = {
@@ -350,6 +357,7 @@ export function newTask(taskId: string, spec: TaskRec['spec'], isIntegration: bo
     reviews: [],
     open_findings: [],
     stall_history: [],
+    stalled_rungs: [],
     adjudications: 0,
     adjudicated: [],
     reasked: {},
@@ -370,6 +378,7 @@ export function newTask(taskId: string, spec: TaskRec['spec'], isIntegration: bo
     note: null,
     repair_requested: false,
     stall_at: null,
+    passed_risk: null,
   };
 }
 
@@ -457,6 +466,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         }
       }
       t.state = d.to;
+      if (d.to === 'TASK_PASSED') t.passed_risk = s.risk;
       if (d.next_step) t.next_step = d.next_step;
       if (d.escalation_reason !== undefined) t.escalation_reason = d.escalation_reason;
       if (d.to === 'TASK_WAITING_WORKER') t.waiting_since = ev.seq;
@@ -466,6 +476,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
       if (d.note !== undefined) t.note = d.note;
       if (d.reset) {
         t.skip_rungs = [];
+        t.stalled_rungs = [];
         t.hold = null;
         t.attempts = 0;
         t.repairs = 0;
@@ -490,6 +501,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
         t.needs_reset = true;
       }
       if (d.reset_repairs) {
+        t.stalled_rungs = [];
         t.repairs = 0;
         t.repair_rung_switches = 0;
         t.stalls = 0;
@@ -653,8 +665,9 @@ function apply(s: RunR, ev: LedgerEvent): void {
           .map((x) => `${x.id}:${x.signature ?? ''}`)
           .sort()
           .join(',');
-        if (last && last.tree === d.tree) last.signature = sig;
-        else t.stall_history.push({ tree: d.tree, signature: sig, stall_keys: [] });
+        // One entry per attempt, so a repair that changed nothing shows as two entries with one tree.
+        if (last && last.n === d.attempt_n) last.signature = sig;
+        else t.stall_history.push({ n: d.attempt_n, tree: d.tree, signature: sig, stall_keys: [] });
       }
       return;
     }
@@ -732,10 +745,18 @@ function apply(s: RunR, ev: LedgerEvent): void {
       t.stalls += 1;
       t.forced_stall = null;
       t.stall_at = t.attempts;
+      if (d.stalled_rung && !t.stalled_rungs.includes(d.stalled_rung))
+        t.stalled_rungs.push(d.stalled_rung);
       return;
     }
     case 'fallback.taken': {
       s.counters.fallbacks += 1;
+      // One event, one fsync: a crash can't apply half of a failure's consequences.
+      if (d.backoff) s.backoff[d.from] = d.backoff;
+      if (d.quarantine) {
+        s.quarantine[d.from] = d.quarantine;
+        if (ev.task_id && s.tasks[ev.task_id]) s.tasks[ev.task_id].quarantined_rungs.push(d.from);
+      }
       if (d.attempt_id && s.attempts[d.attempt_id])
         s.attempts[d.attempt_id].fallback_applied = true;
       const t = ev.task_id ? s.tasks[ev.task_id] : undefined;

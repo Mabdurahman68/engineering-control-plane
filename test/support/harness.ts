@@ -210,6 +210,7 @@ export function makeSim(
     policy?: (p: PolicyBundle) => void;
     plan?: ReturnType<typeof defaultPlan>;
     observer?: DecisionObserver | null;
+    prep?: (sim: any) => void;
     adapterOverride?: (sim: {
       git: SimGit;
       clock: VirtualClock;
@@ -271,6 +272,7 @@ export function makeSim(
     { runId: 'run1', spec, specSha: sha256(canonical(spec)), policySha: 'b'.repeat(64) },
     sim.ports,
   );
+  o.prep?.(sim);
   return sim as Sim;
 }
 

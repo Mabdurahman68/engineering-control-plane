@@ -152,6 +152,9 @@ export class SimGit implements GitPort, MockWorld {
     if (this.commits.has(ref)) return ref;
     return this.refs.get(ref) ?? null;
   }
+  async mergeTrees(ours: string, theirs: string): Promise<MergeResult> {
+    return this.mergeWithHook(ours, theirs);
+  }
   private mergeBase(a: string, b: string): string {
     const seen = new Set<string>();
     const walk = [a];
@@ -172,7 +175,22 @@ export class SimGit implements GitPort, MockWorld {
     }
     return this.root;
   }
-  async mergeTrees(ours: string, theirs: string): Promise<MergeResult> {
+  // A test can force the next merge to conflict, because plan validation makes real ones rare.
+  conflictOn: string | null = null;
+  private async mergeWithHook(ours: string, theirs: string): Promise<MergeResult> {
+    if (this.conflictOn) {
+      const path = this.conflictOn;
+      this.conflictOn = null;
+      const merged = await this.mergeInner(ours, theirs);
+      const files = {
+        ...(this.trees.get(merged.tree) as Files),
+        [path]: `${'<'.repeat(7)} ours\na\n${'='.repeat(7)}\nb\n${'>'.repeat(7)} theirs\n`,
+      };
+      return { clean: false, tree: this.putTree(files), conflicted: [path] };
+    }
+    return this.mergeInner(ours, theirs);
+  }
+  private async mergeInner(ours: string, theirs: string): Promise<MergeResult> {
     const base = this.filesOf(this.mergeBase(ours, theirs));
     const a = this.filesOf(ours);
     const b = this.filesOf(theirs);
