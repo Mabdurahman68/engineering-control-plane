@@ -129,10 +129,23 @@ describe.each(CASES)('%s first on PATH', (_n, make) => {
     refused(b);
     c.run(['resume', 'r1'], w.env);
     refused(b);
-    c.run(['eval', '--rung', 'codex-sol'], w.env);
+    c.run(['eval', '--rung', 'codex-sol', '--task', 'E01', ...policyArgs], w.env);
     c.run(['shadow-replay', 'r1', 'DP-1'], w.env);
     refused(b);
     expect(existsSync(join(w.home, 'fake-cli-calls.log'))).toBe(false);
+  }, 120_000);
+  it('never runs when a run resumes onto it', () => {
+    const b = make();
+    const c = cliEnv();
+    const fine = fakeWorld();
+    const args = ['run', c.specPath, '--policy', resolve('policy'), '--run-id', 'r1'];
+    const r = c.run(args, { ...fine.env, ECP_FAILPOINT: 'after_intent_before_spawn@1' });
+    expect(r.signal).toBe('SIGKILL');
+    const bad = fakeWorld([], { before: [b.dir] });
+    const again = c.run(['resume', 'r1'], bad.env);
+    expect(again.stdout + again.stderr).not.toContain('MOCK_RUN_COMPLETE');
+    refused(b);
+    expect(existsSync(join(bad.home, 'fake-cli-calls.log'))).toBe(false);
   }, 120_000);
   it('never runs for a shadow dispatch', async () => {
     const b = make();

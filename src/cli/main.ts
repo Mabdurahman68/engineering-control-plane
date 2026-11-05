@@ -8,6 +8,7 @@ import { assertMixedFamilies, loadPolicy, policyHash } from '../policy/load.ts';
 import { renderMetrics, renderStatus } from '../report/report.ts';
 import { makeRelayAdapters } from '../workers/relay/adapter.ts';
 import { verifyRelayPins } from '../workers/relay/pins.ts';
+import { authoriseClis } from '../workers/relay/real-worker-guard.ts';
 import { replayCommand } from './replay-cmd.ts';
 import { evalCommand } from './eval-cmd.ts';
 import { isolationCommand } from './isolation-cmd.ts';
@@ -51,6 +52,14 @@ async function cmdRun(args: string[]) {
     fail(`run ${runId} already exists; use ecp resume`);
   if (!takeLock(globalLock())) fail('another run is active: one active run at a time');
   const mockScript = values['mock-script'] ? loadMockScript(values['mock-script']) : null;
+  if (!mockScript) {
+    // Anything that isn't a pinned fixture is a real CLI, and this is the plain place to say so.
+    const auth = authoriseClis(repoRoot(), process.env.PATH ?? '');
+    if (!auth.allowed) {
+      rmSync(globalLock(), { force: true });
+      fail(`refused: ${auth.reason}`, 3);
+    }
+  }
   const w = wire({ runId, spec, policyDir: values.policy, mockScript });
   w.store.write('spec.yaml', readFileSync(specPath, 'utf8'));
   w.store.write('policy.lock', JSON.stringify({ sha256: w.policySha }));

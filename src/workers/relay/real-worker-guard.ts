@@ -1,3 +1,4 @@
+import { hostname, homedir } from 'node:os';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import pins from './fake-cli-pins.json' with { type: 'json' };
@@ -62,7 +63,7 @@ export function authoriseClis(repoRoot: string, pathVar: string): Authorised {
   for (const name of CLI_NAMES) {
     const { found, bad } = resolveOnPath(name, pathVar);
     if (bad !== null) return refuse(name, `a PATH entry that isn't absolute: ${bad}`);
-    if (!found) return { allowed: false, reason: `${name} isn't on PATH`, path: null };
+    if (!found) return refuse(name, "nothing: it isn't on PATH");
     const real = realpathSync(found);
     // A link into the directory from elsewhere fails too: the launcher finds its core beside itself.
     if (
@@ -98,11 +99,15 @@ function refuse(name: string, path: string): Authorised {
 }
 
 export function machineId(): string {
-  return process.env.HOSTNAME ?? 'this-machine';
+  return hostname();
+}
+
+export function proofPath(): string {
+  return join(process.env.ECP_HOME ?? join(homedir(), '.ecp'), 'isolation-proof.json');
 }
 
 function readProof(): Proof | null {
-  const p = 'docs/isolation-proof.json';
+  const p = proofPath();
   if (!existsSync(p)) return null;
   try {
     return JSON.parse(readFileSync(p, 'utf8'));
