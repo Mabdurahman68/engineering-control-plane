@@ -29,6 +29,12 @@ describe('verdict consistency', () => {
     r.criteria[0].finding_refs = [];
     mustReject(r);
   });
+  it('rejects a PASS over a properly linked failure', () => {
+    // Everything but the verdict is consistent: a valid FAIL, relabelled.
+    const r = failReport();
+    r.verdict = 'PASS';
+    mustReject(r);
+  });
   it('rejects PASS with a failed semantic check', () => {
     const r = passReport();
     r.semantic_checks.security.verdict = 'FAIL';

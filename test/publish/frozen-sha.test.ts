@@ -53,7 +53,6 @@ describe('the frozen commit', () => {
       return out;
     };
     const exit = await runReal(sim);
-    expect(exit.state).toBe('PR_OPENED');
     const frozen = sim.engine.s.publish.frozen_sha as string;
     expect(secretCommit).not.toBe(frozen);
     assertNotForbidden(
@@ -62,6 +61,7 @@ describe('the frozen commit', () => {
       'the remote is not at the frozen commit',
     );
     assertNotForbidden(RULE, remoteHas(bare, secretCommit), 'the moved commit reached the remote');
+    expect(exit.state).toBe('PR_OPENED');
   });
   it('the argv holds a full SHA as the source, never a branch name', () => {
     const sha = 'a'.repeat(40);

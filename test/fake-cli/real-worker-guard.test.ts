@@ -100,9 +100,14 @@ describe.each(CASES)('%s first on PATH', (_n, make) => {
     const b = make();
     const w = fakeWorld([], { before: [b.dir] });
     for (const args of [['--version'], ['--help'], ['login', 'status']]) {
-      expect(() => execCli(ROOT, 'codex', args, { PATH: w.path, HOME: w.home })).toThrow(
-        CliRefused,
-      );
+      let thrown: unknown = null;
+      try {
+        execCli(ROOT, 'codex', args, { PATH: w.path, HOME: w.home });
+      } catch (err) {
+        thrown = err;
+      }
+      refused(b);
+      expect(thrown).toBeInstanceOf(CliRefused);
     }
     refused(b);
   });
@@ -111,11 +116,14 @@ describe.each(CASES)('%s first on PATH', (_n, make) => {
     const w = fakeWorld([], { before: [b.dir] });
     Object.assign(process.env, w.env);
     const health = await adapter().probe('codex-sol');
-    expect(health.installed).toBe(false);
-    await expect(adapter().dispatch(fakeRequest(tempDir('ecp-a-')) as never)).rejects.toThrow(
-      CliRefused,
-    );
     refused(b);
+    expect(health.installed).toBe(false);
+    const out = await adapter()
+      .dispatch(fakeRequest(tempDir('ecp-a-')) as never)
+      .catch((err) => err);
+    await new Promise((r) => setTimeout(r, 1500));
+    refused(b);
+    expect(out).toBeInstanceOf(CliRefused);
   });
   it('never runs for doctor, run, resume, eval or replay', () => {
     const b = make();
