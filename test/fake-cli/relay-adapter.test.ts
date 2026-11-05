@@ -8,7 +8,7 @@ import {
   relayEnv,
   type CliKind,
 } from '../../src/workers/relay/adapter.ts';
-import { fakeRequest, fakeWorld } from '../support/fake-cli.ts';
+import { fakeRequest, fakeWorld, pidAlive, until } from '../support/fake-cli.ts';
 import { tempDir } from '../support/repo.ts';
 
 const policy = loadPolicy(resolve('policy'));
@@ -86,7 +86,8 @@ describe.each(KINDS)('%s through its real relay', (kind) => {
     expect(raw.cancelled_by_us).toBe(true);
     const log = readFileSync(join(w.home, 'fake-cli-calls.log'), 'utf8').trim().split('\n');
     const pid = JSON.parse(log[0] as string).pid;
-    expect(() => process.kill(pid, 0)).toThrow();
+    // The relay ends the group as it goes, so the child can outlast it by a moment.
+    expect(await until(() => !pidAlive(pid), 10_000)).toBe(true);
   }, 40_000);
 
   it('collects a published result on re-attach and reports none otherwise', async () => {
