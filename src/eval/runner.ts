@@ -200,7 +200,7 @@ export async function runEvalTask(o: {
     mode: o.task.mode,
     timeout_s: 1800,
     session_id: null,
-    env_allowlist: rung.credential_env,
+    env_allowlist: rung.auth_mode === 'api_key' ? rung.credential_env : [],
     meta: {
       task_id: o.task.id,
       step: o.task.mode === 'write' ? 'work' : 'review',

@@ -305,7 +305,19 @@ export class Engine {
     }
   }
 
+  // The system never moves to an API key on its own. Once a subscription rung has hit its quota or lost
+  // its session, a key that the owner configured for another purpose isn't the next step down.
+  private apiKeyBarred(r: string): boolean {
+    const policy = this.p.policy.workers.rungs;
+    if (policy[r]?.auth_mode !== 'api_key') return false;
+    return Object.entries(this.s.quarantine).some(
+      ([other, q]) =>
+        policy[other]?.auth_mode !== 'api_key' && (q.reason === 'QUOTA' || q.reason === 'AUTH'),
+    );
+  }
+
   rungAvailable(r: string): boolean {
+    if (this.apiKeyBarred(r)) return false;
     const h = this.health.get(r);
     if (!h?.ok) return false;
     const q = this.s.quarantine[r];
@@ -409,7 +421,8 @@ export class Engine {
       mode: a.mode,
       timeout_s: a.timeout_s,
       session_id: sessionId,
-      env_allowlist: rung.credential_env,
+      // Credentials are for API-key rungs only. A subscription rung can't be handed one by configuration.
+      env_allowlist: rung.auth_mode === 'api_key' ? rung.credential_env : [],
       meta: {
         task_id: a.task_id,
         step: a.step,

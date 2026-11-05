@@ -162,7 +162,7 @@ export class ShadowManager implements DecisionObserver {
       mode: 'read_only' as const,
       timeout_s: timeout,
       session_id: null,
-      env_allowlist: rung.credential_env,
+      env_allowlist: rung.auth_mode === 'api_key' ? rung.credential_env : [],
       meta: {
         task_id: rec.task_id,
         step: 'shadow',

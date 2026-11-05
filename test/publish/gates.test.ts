@@ -6,6 +6,7 @@ import { loadDenyList, loadForbidden } from '../../src/publish/lists.ts';
 import { assertNotForbidden } from '../support/assert.ts';
 import {
   DENIED_NAME,
+  FORBIDDEN_NAME,
   fakeSecret,
   gateRepo,
   secretPatterns,
@@ -179,6 +180,27 @@ describe('H-PUSH-BRANCH', () => {
       destination: 'build/v0.2',
       destinationRule: { exact: 'build/v0.1' },
     });
+  });
+});
+
+describe('H-PUSH-FILES', () => {
+  const RULE = 'H-PUSH-FILES';
+  it('a path outside the allowlist blocks', async () => {
+    const r = gateRepo();
+    await blocks(RULE, r, r.commit({ 'elsewhere/a.ts': 'a\n' }), RULE);
+  });
+  it('a forbidden name blocks, even on an allowed path', async () => {
+    const r = gateRepo();
+    await blocks(RULE, r, r.commit({ [`src/${FORBIDDEN_NAME}`]: 'a\n' }), RULE);
+  });
+});
+
+describe('H-PUSH-BASE', () => {
+  const RULE = 'H-PUSH-BASE';
+  it('a remote base that has moved blocks', async () => {
+    const r = gateRepo();
+    const tip = r.commit({ 'src/a.ts': 'a\n' });
+    await blocks(RULE, r, tip, RULE, { baseCommit: tip });
   });
 });
 

@@ -9,7 +9,6 @@ import { fakeWorld, ledgerEvents, loggedWorkers, pidAlive, until } from '../supp
 const RULE = 'R-C5-LAUNCH';
 const ITERATIONS = Number(process.env.ECP_LAUNCH_RUNS ?? 200);
 const POOL = 6;
-const LATE = 'LATE-RESULT-MARKER';
 
 function seeded(seed: number) {
   let s = seed;
@@ -62,6 +61,7 @@ async function iteration(i: number): Promise<string[]> {
   const policy = ['--policy', resolve('policy')];
   const args = ['run', c.specPath, ...policy, '--run-id', 'r1'];
   const problems: string[] = [];
+  const lateFor: string[] = [];
   const started = () => ledgerEvents(c.home, 'r1').filter((e) => e.type === 'dispatch.started');
   const intents = () =>
     ledgerEvents(c.home, 'r1').filter(
@@ -84,11 +84,13 @@ async function iteration(i: number): Promise<string[]> {
     const nth = atWriter ? 3 : 1;
     const r = await c.runAsync(args, { ...w.env, ECP_FAILPOINT: `${kind}@${nth}` });
     if (r.signal !== 'SIGKILL') problems.push(`coordinator wasn't killed: ${r.signal} ${r.stderr}`);
-    if (rand() < 0.5) await killRelay();
+    // A relay that's alive when it's swept overwrites result.json as it goes, so some must already be dead.
+    if (rand() < 0.5 || (kind === 'after_spawn_before_started' && i % 16 < 8)) await killRelay();
     // A late result from the attempt the coordinator lost, before anything has looked at it.
     const open = intents().at(-1);
     const notStarted = !started().some((e) => e.data.attempt_id === open?.data.attempt_id);
     if (notStarted && open) {
+      lateFor.push(open.data.attempt_id);
       mkdirSync(open.data.out_dir, { recursive: true });
       writeFileSync(
         join(open.data.out_dir, 'result.json'),
@@ -96,7 +98,7 @@ async function iteration(i: number): Promise<string[]> {
           schema: 'delegate-relay.result.v1',
           status: 'completed',
           exitCode: 0,
-          finalMessage: LATE,
+          finalMessage: 'late',
         }),
       );
     }
@@ -147,8 +149,14 @@ async function iteration(i: number): Promise<string[]> {
   }
 
   // The late result was never taken as that attempt's work.
-  const used = ledgerEvents(c.home, 'r1').some((e) => JSON.stringify(e).includes(LATE));
-  if (used) problems.push('a late result reached the ledger');
+  for (const id of lateFor) {
+    const finished = ledgerEvents(c.home, 'r1').filter(
+      (e) => e.type === 'dispatch.finished' && e.data.attempt_id === id,
+    );
+    if (finished.some((e) => e.data.status === 'completed')) {
+      problems.push(`a late result was collected for ${id}`);
+    }
+  }
 
   killAll([...relaysUnder(c.home), ...loggedWorkers(w.home).map((x) => x.pid)]);
   rmSync(c.home, { recursive: true, force: true });

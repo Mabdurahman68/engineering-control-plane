@@ -8,6 +8,7 @@ import { DelegateRelayAdapter } from '../../src/workers/relay/adapter.ts';
 import { execCli } from '../../src/workers/relay/cli.ts';
 import { fileSha } from '../../src/workers/relay/pins.ts';
 import { reviewFail } from '../../src/workers/mock/mock-adapter.ts';
+import { assertNotForbidden } from '../support/assert.ts';
 import { fakeRequest, fakeWorld } from '../support/fake-cli.ts';
 import { makeRepo } from '../support/repo.ts';
 
@@ -112,7 +113,7 @@ describe('the contract probe', () => {
     'fails on %s',
     async (_n, step, login) => {
       const r = await probe(step, login as string | undefined);
-      expect(r.pass).toBe(false);
+      assertNotForbidden('R-C7-PROBE', r.pass, `the probe passed on ${_n}`);
       expect(r.failed.length).toBeGreaterThan(0);
     },
     30_000,
