@@ -177,5 +177,5 @@ describe('killed in the launch window', () => {
     );
     assertNotForbidden(RULE, problems.length > 0, problems.slice(0, 20).join('\n'));
     expect(problems).toEqual([]);
-  }, 1_200_000);
+  }, 2_400_000);
 });

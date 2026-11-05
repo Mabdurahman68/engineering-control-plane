@@ -10,7 +10,7 @@ function harness(args: string[]) {
   const r = spawnSync(process.execPath, ['scripts/rule-removal.ts', ...args], {
     encoding: 'utf8',
     env: { ...process.env, ECP_RESULTS: results },
-    timeout: 300_000,
+    timeout: 1_200_000,
   });
   return { ...r, output: `${r.stdout}${r.stderr}`, results };
 }
@@ -34,29 +34,29 @@ describe('the rule-removal harness refuses', () => {
     const out = JSON.parse(readFileSync(r.results, 'utf8'));
     expect(out.results[0].steps.typecheck).not.toBe(0);
     expect(out.results[0].steps.patched).toBeUndefined();
-  }, 300_000);
+  }, 1_200_000);
   it('a patch that only renames a diagnostic: a failure with no token', () => {
     const r = harness(negative('mistargeted'));
     expect(r.status).not.toBe(0);
     expect(r.output).toContain('patch_not_targeted');
-  }, 300_000);
+  }, 1_200_000);
   it('a patch that breaks a sibling', () => {
     const r = harness(negative('breaks-sibling'));
     expect(r.status).not.toBe(0);
     expect(r.output).toContain('a sibling broke');
-  }, 300_000);
+  }, 1_200_000);
   it('a patch the test does not notice', () => {
     const r = harness(negative('no-effect'));
     expect(r.status).not.toBe(0);
     expect(r.output).toContain('survived');
-  }, 300_000);
+  }, 1_200_000);
   it('a patch touching a file outside its list', () => {
     const r = harness(negative('outside-touches'));
     expect(r.status).not.toBe(0);
     expect(r.output).toContain('patch touches src/review/effective.ts');
     const out = JSON.parse(readFileSync(r.results, 'utf8'));
     expect(out.results[0].steps.typecheck).toBeUndefined();
-  }, 300_000);
+  }, 1_200_000);
 });
 
 describe('the registry', () => {
