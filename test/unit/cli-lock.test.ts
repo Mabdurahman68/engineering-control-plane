@@ -7,6 +7,7 @@ import {
   type Holder,
   liveness,
   lockHolder,
+  parseStart,
   procStart,
   releaseLock,
   takeLock,
@@ -112,33 +113,75 @@ describe('what counts as evidence that an owner is dead', () => {
     throw Object.assign(new Error('try again'), { code: 'EAGAIN' });
   };
   const fine = () => {};
-  const owner = { pid: 101, start: 'Mon 10:00' };
+  const THEN = 'Thu Nov  5 10:00:00 2026';
+  const owner = { pid: 101, start: parseStart(THEN) };
+  const says = (out: string | null) => () => out;
   it.each([
-    ['the kernel says no such process', esrch, () => null, false],
-    ['the PID now belongs to a later process', fine, () => 'Mon 11:00', false],
-    ['the same process', fine, () => 'Mon 10:00', true],
-    ["another user's process, same start", eperm, () => 'Mon 10:00', true],
-    ['ps fails: exit 1, or empty output, or anything', fine, () => null, 'unknown'],
-    ["another user's process, and ps fails", eperm, () => null, 'unknown'],
-    ['the signal itself fails oddly', eagain, () => 'Mon 11:00', 'unknown'],
+    ['the kernel says no such process', esrch, says(null), false],
+    ['the PID now belongs to a later process', fine, says('Thu Nov  5 11:00:00 2026'), false],
+    ['the same process', fine, says(THEN), true],
+    ['the same process, spaced differently', fine, says('  Thu Nov 5  10:00:00 2026\n'), true],
+    ["another user's process, same start", eperm, says(THEN), true],
+    ['ps fails', fine, says(null), 'unknown'],
+    ['empty output', fine, says(''), 'unknown'],
+    ['whitespace only', fine, says('  \n'), 'unknown'],
+    ['a partial line', fine, says('Thu Nov'), 'unknown'],
+    ['a garbled line', fine, says('ps: out of memory'), 'unknown'],
+    ['a month that does not exist', fine, says('Thu Xyz  5 10:00:00 2026'), 'unknown'],
+    [
+      'a start earlier than the owner: not a reuse',
+      fine,
+      says('Thu Nov  5 09:00:00 2026'),
+      'unknown',
+    ],
+    ["another user's process, garbled", eperm, says('garbage'), 'unknown'],
+    ["another user's process, empty", eperm, says(''), 'unknown'],
+    ['the signal itself fails oddly', eagain, says('Thu Nov  5 11:00:00 2026'), 'unknown'],
   ])('%s', (_n, signal, start, expected) => {
     expect(liveness(owner, { signal, start })).toBe(expected);
   });
+  it('a claim in an older format is never called reused', () => {
+    const old = { pid: 101, start: 'Thu Nov  5 10:00:00 2026' };
+    expect(liveness(old, { signal: fine, start: says('Thu Nov  5 11:00:00 2026') })).toBe(
+      'unknown',
+    );
+  });
   it.each([
-    ['ps gives no answer', { signal: fine, start: () => null }],
-    ['the signal fails oddly', { signal: eagain, start: () => null }],
+    ['ps gives no answer', { signal: fine, start: says(null) }],
+    ['ps prints a partial line', { signal: fine, start: says('Thu Nov') }],
+    ['ps prints garbage', { signal: fine, start: says('garbled output') }],
+    ['the signal fails oddly', { signal: eagain, start: says(null) }],
   ])('%s after the first acquisition returned: no second owner', (_n, probes) => {
     const lock = fresh();
-    expect(takeLock(lock, { me: A, alive: () => false })).toBe(true);
+    const a = { pid: 101, start: parseStart(THEN) };
+    expect(takeLock(lock, { me: a, alive: () => false })).toBe(true);
+    // The contender's own start time is fine: only its look at the owner goes wrong.
     const bWon = takeLock(lock, { me: B, alive: (h) => liveness(h, probes) });
     assertNotForbidden(RULE, bWon, 'an inspection failure made a second owner');
-    expect(lockHolder(lock)?.pid).toBe(A.pid);
+    expect(lockHolder(lock)?.pid).toBe(a.pid);
     expect(coordinatorAlive(lock, (h) => liveness(h, probes))).toBe(true);
+  });
+  it('the same process reads the same under any time zone or locale', () => {
+    const saved = { TZ: process.env.TZ, LC_ALL: process.env.LC_ALL };
+    try {
+      process.env.TZ = 'UTC0';
+      const utc = procStart(process.pid);
+      process.env.TZ = 'EET-2';
+      process.env.LC_ALL = 'de_DE.UTF-8';
+      expect(procStart(process.pid)).toBe(utc);
+      expect(utc).toMatch(/Z$/);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
   it('real ps reporting a real process stays alive, and a real dead PID is dead', () => {
     expect(liveness({ pid: process.pid, start: procStart(process.pid) })).toBe(true);
     expect(liveness({ pid: 999_999, start: 'long ago' })).toBe(false);
-    expect(liveness({ pid: process.pid, start: 'another time' })).toBe(false);
+    expect(liveness({ pid: process.pid, start: '2000-01-01T00:00:00.000Z' })).toBe(false);
+    expect(liveness({ pid: process.pid, start: 'another time' })).toBe('unknown');
   });
 });
 

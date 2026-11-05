@@ -26,7 +26,7 @@ export type Holder = { pid: number; start: string | null };
 export type Probes = {
   // Signal 0: delivers nothing. Throws ESRCH only if there's no such process.
   signal: (pid: number) => void;
-  // A start time, or null when `ps` gave no usable answer, for any reason.
+  // What `ps` printed for the start time, or null if it failed.
   start: (pid: number) => string | null;
 };
 
@@ -36,26 +36,39 @@ const REAL: Probes = {
   },
   start: (pid) => {
     try {
-      const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      // `lstart` follows the time zone and locale, so both are fixed: one process, one rendering.
+      return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
         encoding: 'utf8',
+        env: { ...process.env, TZ: 'UTC0', LC_ALL: 'C' },
         stdio: ['ignore', 'pipe', 'ignore'],
       });
-      return out.trim() || null;
     } catch {
       return null;
     }
   },
 };
 
+const LSTART = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}:\d{2}:\d{2}) (\d{4})$/;
+
+// An instant, or null for anything that isn't a whole start time. A partial or garbled line is no
+// evidence of anything.
+export function parseStart(raw: string | null): string | null {
+  const m = LSTART.exec((raw ?? '').trim().replace(/[ \t]+/g, ' '));
+  if (!m) return null;
+  const at = Date.parse(`${m[1]} ${m[2]} ${m[4]} ${m[3]} GMT`);
+  return Number.isNaN(at) ? null : new Date(at).toISOString();
+}
+
 export function procStart(pid: number): string | null {
-  return REAL.start(pid);
+  return parseStart(REAL.start(pid));
 }
 
 export type Liveness = boolean | 'unknown';
 
 // Dead needs evidence: the kernel saying there's no such process, or the PID now belonging to a process
-// that started at another time. An exit status or an empty answer from `ps` is neither, since `ps` gives
-// those for its own failures too. Anything short of evidence is unknown, and unknown keeps the owner.
+// that started later than the owner did, which is what a reused PID looks like. A failed, empty, partial
+// or garbled answer from `ps` is no evidence, and nor is a start time earlier than the owner's, which
+// can't be a reuse. Anything short of evidence is unknown, and unknown keeps the owner.
 export function liveness(h: Holder, probes: Probes = REAL): Liveness {
   try {
     probes.signal(h.pid);
@@ -63,9 +76,12 @@ export function liveness(h: Holder, probes: Probes = REAL): Liveness {
     if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false;
     if ((err as NodeJS.ErrnoException).code !== 'EPERM') return 'unknown';
   }
-  const start = probes.start(h.pid);
-  if (start === null) return 'unknown';
-  return start === h.start;
+  const seen = parseStart(probes.start(h.pid));
+  if (seen === null || h.start === null) return 'unknown';
+  // A claim from before this format can't be compared, so it can't be called reused.
+  if (Number.isNaN(Date.parse(h.start)) || !h.start.endsWith('Z')) return 'unknown';
+  if (seen === h.start) return true;
+  return seen > h.start ? false : 'unknown';
 }
 
 function claims(dir: string): number[] {
