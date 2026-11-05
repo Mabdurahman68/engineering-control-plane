@@ -1,13 +1,13 @@
-diff --git a/src/review/consistency.ts b/src/review/consistency.ts
-index 34fe8cf..f51db75 100644
---- a/src/review/consistency.ts
-+++ b/src/review/consistency.ts
-@@ -61,7 +61,7 @@ export function consistencyErrors(r: ReviewReport, ctx: ConsistencyContext): str
-     }
-   }
-   if (r.verdict === 'PASS') {
--    if (anyBlocking) e.push('PASS with a blocker or major finding');
-+    if (anyBlocking) e.push('a renamed diagnostic');
-     if (failedAny) e.push('PASS with a failed criterion or semantic check');
-     if (uncoveredUnverifiable) e.push('PASS with an uncovered UNVERIFIABLE criterion');
-   } else if (!anyBlocking) {
+diff --git a/src/publish/gate.ts b/src/publish/gate.ts
+index b9d8ef1..4e23d3e 100644
+--- a/src/publish/gate.ts
++++ b/src/publish/gate.ts
+@@ -93,7 +93,7 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+   // H-PUSH-SECRET: every blob, every commit's message and author fields, the PR title and body.
+   const secretOf = (name: string, text: string) => {
+     for (const h of scanText(text, i.secretPatterns))
+-      fail('H-PUSH-SECRET', `${name}:${h.line} (${h.pattern})`);
++      fail('H-PUSH-RENAMED', `${name}:${h.line} (${h.pattern})`);
+   };
+   for (const p of pairs) secretOf(p.path, (blobs.get(p.blob) as { text: string }).text);
+   for (const m of meta) {

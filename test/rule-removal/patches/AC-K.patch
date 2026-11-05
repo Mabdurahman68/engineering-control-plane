@@ -1,8 +1,8 @@
 diff --git a/src/core/engine.ts b/src/core/engine.ts
-index 8d74dff..d41b046 100644
+index f50a8ab..d5d3c68 100644
 --- a/src/core/engine.ts
 +++ b/src/core/engine.ts
-@@ -317,7 +317,6 @@ export class Engine {
+@@ -324,7 +324,6 @@ export class Engine {
    }
  
    rungAvailable(r: string): boolean {
@@ -10,7 +10,7 @@ index 8d74dff..d41b046 100644
      const h = this.health.get(r);
      if (!h?.ok) return false;
      const q = this.s.quarantine[r];
-@@ -422,7 +421,7 @@ export class Engine {
+@@ -429,7 +428,7 @@ export class Engine {
        timeout_s: a.timeout_s,
        session_id: sessionId,
        // Credentials are for API-key rungs only. A subscription rung can't be handed one by configuration.

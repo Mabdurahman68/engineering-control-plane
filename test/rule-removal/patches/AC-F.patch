@@ -1,0 +1,31 @@
+diff --git a/src/report/figures.ts b/src/report/figures.ts
+index aa86d90..dee0b16 100644
+--- a/src/report/figures.ts
++++ b/src/report/figures.ts
+@@ -142,7 +142,7 @@ export function computeFigures(
+       }
+       case 'claim.recorded':
+         // A reviewer's verdict records the claim again. The later record is the claim's state.
+-        latestClaim.set(d.claim.claim_id, d.claim);
++        latestClaim.set(String(e.seq), d.claim);
+         break;
+ 
+       case 'fallback.taken':
+@@ -160,7 +160,7 @@ export function computeFigures(
+         }
+         if (typeof d.cost_usd === 'number') {
+           f.usage.cost_measured += 1;
+-          f.usage.cost_usd += d.cost_usd;
++          f.usage.cost_usd += d.cost_usd * 2;
+         }
+         break;
+       case 'dispatch.finished':
+@@ -237,7 +237,7 @@ export function computeFigures(
+       f.claims.corrections.push({ claim: c.claim, observed: c.mechanical.observed });
+   }
+   // An invocation with no usage record is unmeasured, and still counts as an invocation.
+-  f.usage.total = Math.max(f.usage.total, finished);
++  void finished;
+   f.disagreements = [...disagreement.values()];
+   for (const o of outcome.values()) {
+     if (o.label === 'CONSISTENT_WITH_COORDINATOR') f.shadow.labels.coordinator += 1;

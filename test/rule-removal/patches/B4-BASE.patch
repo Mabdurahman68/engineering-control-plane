@@ -1,13 +1,13 @@
 diff --git a/src/publish/gate.ts b/src/publish/gate.ts
-index 6ef0649..396e00e 100644
+index b9d8ef1..86c733c 100644
 --- a/src/publish/gate.ts
 +++ b/src/publish/gate.ts
 @@ -147,7 +147,7 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
    // H-PUSH-BASE: exactly at the base, or at the one commit a recorded acceptance names.
    const remote = await lsRemote(i.repo, i.remoteUrl);
    const observed = remote.get(`refs/heads/${i.baseBranch}`) ?? null;
--  if (observed !== i.baseCommit && observed !== i.acceptedBase) {
-+  if (observed === null) {
+-  if (observed === null || (observed !== i.baseCommit && observed !== i.acceptedBase)) {
++  if (observed === 'never') {
      fail('H-PUSH-BASE', `remote ${i.baseBranch} is at ${observed}, wanted ${i.baseCommit}`);
    }
    if (!i.remoteUrl.includes(i.repoName) && !i.remoteUrl.startsWith('/'))

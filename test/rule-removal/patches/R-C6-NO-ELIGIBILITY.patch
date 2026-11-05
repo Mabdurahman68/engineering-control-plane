@@ -1,5 +1,5 @@
 diff --git a/src/shadow/manager.ts b/src/shadow/manager.ts
-index c14e882..240308f 100644
+index 846fa9f..60aee48 100644
 --- a/src/shadow/manager.ts
 +++ b/src/shadow/manager.ts
 @@ -243,7 +243,7 @@ export class ShadowManager implements DecisionObserver {

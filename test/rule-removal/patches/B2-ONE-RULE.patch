@@ -1,8 +1,8 @@
 diff --git a/src/core/recovery.ts b/src/core/recovery.ts
-index 31bdb00..66f2201 100644
+index cd15c99..41b92d2 100644
 --- a/src/core/recovery.ts
 +++ b/src/core/recovery.ts
-@@ -56,7 +56,7 @@ export type ProofInput = {
+@@ -61,7 +61,7 @@ export type ProofInput = {
    deadlineMs: number;
  };
  export function planRecovery(p: ProofInput): 'reattach' | 'kill' {

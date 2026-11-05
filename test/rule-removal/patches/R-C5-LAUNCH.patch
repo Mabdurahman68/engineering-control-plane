@@ -1,8 +1,8 @@
 diff --git a/src/core/recovery.ts b/src/core/recovery.ts
-index 31bdb00..4ac1bc4 100644
+index cd15c99..0d7ce2e 100644
 --- a/src/core/recovery.ts
 +++ b/src/core/recovery.ts
-@@ -117,7 +117,7 @@ export async function reconcileOpenAttempts(e: Engine): Promise<void> {
+@@ -168,7 +168,7 @@ export async function reconcileOpenAttempts(e: Engine): Promise<void> {
      }
      // The relay is gone. If it published before dying, the result is still good, and is collected.
      let raw: RawOutcome = lostOutcome();

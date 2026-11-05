@@ -1,10 +1,10 @@
 diff --git a/src/core/recovery.ts b/src/core/recovery.ts
-index 31bdb00..feeeef8 100644
+index cd15c99..c3febd7 100644
 --- a/src/core/recovery.ts
 +++ b/src/core/recovery.ts
-@@ -73,7 +73,7 @@ export const lostOutcome = (): RawOutcome => ({
- // Runs once on resume, before any new work. Scanning sends no signal; `planRecovery` decides.
- export async function reconcileOpenAttempts(e: Engine): Promise<void> {
+@@ -124,7 +124,7 @@ export async function reconcileOpenAttempts(e: Engine): Promise<void> {
+   recoverUsage(e, events);
+   await reconcileOpenGates(e, events);
    for (const a of Object.values(e.s.attempts)) {
 -    if (a.finished || a.fenced || a.class !== null) continue;
 +    if (a.fenced) continue;

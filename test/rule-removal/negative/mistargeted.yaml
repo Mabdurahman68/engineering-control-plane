@@ -1,21 +1,21 @@
 rules:
-  - id: R-C1-CONSISTENCY
+  - id: H-PUSH-SECRET
     source: harness negative case
     patch: test/rule-removal/negative/mistargeted.patch
     removes: "mistargeted"
     removed_predicate: "none"
-    touches: [src/review/consistency.ts]
+    touches: [src/publish/gate.ts]
     must_fail:
       [
         {
-          file: test/unit/review/consistency.test.ts,
-          test_name: "rejects a PASS over a properly linked failure",
+          file: test/publish/gates.test.ts,
+          test_name: "a secret in a commit message blocks",
         },
       ]
     must_pass:
       [
         {
-          file: test/unit/review/consistency.test.ts,
-          test_name: "accepts a consistent PASS and a consistent FAIL",
+          file: test/publish/gates.test.ts,
+          test_name: "passes every gate",
         },
       ]
