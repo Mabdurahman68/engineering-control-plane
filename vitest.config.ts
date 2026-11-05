@@ -6,5 +6,7 @@ export default defineConfig({
     testTimeout: 120_000,
     hookTimeout: 120_000,
     pool: 'forks',
+    // The real-process suites contend for CPU, and a starved one times out for no reason of its own.
+    maxWorkers: 4,
   },
 });

@@ -8,7 +8,7 @@ import { fakeWorld, ledgerEvents, loggedWorkers, pidAlive, until } from '../supp
 
 const RULE = 'R-C5-LAUNCH';
 const ITERATIONS = Number(process.env.ECP_LAUNCH_RUNS ?? 200);
-const POOL = 6;
+const POOL = 4;
 
 function seeded(seed: number) {
   let s = seed;

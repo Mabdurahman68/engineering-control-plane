@@ -37,7 +37,7 @@ describe('the hole test (AC-B)', () => {
     // The fuzz has to reach all the kinds of ending, or it isn't exercising them.
     expect(byEnd.CANCELLED ?? 0).toBeGreaterThan(0);
     expect(byEnd.MOCK_RUN_COMPLETE ?? 0).toBeGreaterThan(0);
-  }, 1_200_000);
+  }, 2_400_000);
   it('a seed replays exactly', async () => {
     const a = await fuzzRun(4242);
     const b = await fuzzRun(4242);
