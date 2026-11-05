@@ -14,6 +14,27 @@ import type { AttemptRec, TaskRec } from './reducer.ts';
 
 export type StepOutcome = { kind: 'wait' } | { kind: 'failed' } | { kind: 'ok'; raw: RawOutcome };
 
+// The claims a review of this subject covers: the latest attempt's, for a task, and for the integrated
+// review, each task's. Each at its latest record, with the ID a reviewer needs to answer it.
+export function reviewableClaims(e: Engine, taskId: string | null): Map<string, Claim> {
+  const latest = new Map<string, Claim>();
+  for (const ev of loadLedger(e.p.ledgerStore).events) {
+    if (ev.type !== 'claim.recorded') continue;
+    const c = ev.data.claim as Claim;
+    if (taskId === null || c.task_id === taskId) latest.set(c.claim_id, c);
+  }
+  const attemptOf = (c: Claim) => Number(c.claim_id.split('-').at(-2));
+  const newest = new Map<string, number>();
+  for (const c of latest.values()) {
+    const k = c.task_id ?? '';
+    newest.set(k, Math.max(newest.get(k) ?? 0, attemptOf(c)));
+  }
+  for (const [id, c] of latest) {
+    if (attemptOf(c) !== newest.get(c.task_id ?? '')) latest.delete(id);
+  }
+  return latest;
+}
+
 export function skipListFor(e: Engine, t: TaskRec | null, step: string): string[] {
   const list = t ? t.skip_rungs : e.s.run_skip_rungs;
   const skip = list.filter((k) => k.startsWith(`${step}:`)).map((k) => k.slice(step.length + 1));
@@ -280,18 +301,13 @@ export async function collectReview(e: Engine, input: ReviewInput) {
     .map((fp) => ({ fingerprint: fp, cause: waiverVoidCause(fp, scoped as never) }))
     .filter((v) => v.cause !== null);
   e.p.store.write(`reviews/${review_id}.json`, JSON.stringify(review, null, 2));
-  // A later record of a claim supersedes the earlier one.
-  if (report.claims_reviewed.length) {
-    const recorded = new Map<string, Claim>();
-    for (const ev of loadLedger(e.p.ledgerStore).events) {
-      if (ev.type === 'claim.recorded') {
-        const c = ev.data.claim as Claim;
-        recorded.set(c.claim_id, c);
-      }
-    }
+  // Only claims this review covers, and never by the family that made them.
+  if (a.step !== 'plan_review') {
+    const reviewable = reviewableClaims(e, a.task_id);
     for (const r of report.claims_reviewed) {
-      const c = recorded.get(r.claim_id);
+      const c = reviewable.get(r.claim_id);
       if (!c) continue;
+      if (c.asserted_by !== 'code' && e.family(c.asserted_by) === e.family(a.rung)) continue;
       const next = applyClaimReview(c, r, a.rung);
       if (next) e.append('claim.recorded', c.task_id, { claim: next });
     }

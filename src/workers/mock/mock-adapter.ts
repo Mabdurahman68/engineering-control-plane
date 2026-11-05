@@ -396,7 +396,9 @@ export class MockAdapter implements WorkerAdapter {
       case 'probe':
         return ok(report());
       case 'reviewer_pass':
-        return ok(block(reviewPass(acs, files)));
+        return ok(
+          block({ ...reviewPass(acs, files), claims_reviewed: args?.claims_reviewed ?? [] }),
+        );
       case 'reviewer_fail': {
         if (args?.unverifiable) {
           // One UNVERIFIABLE criterion citing one major finding, every semantic check PASS: the exact case.

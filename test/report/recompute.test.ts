@@ -31,6 +31,7 @@ function count(home: string, run: string) {
     cost: costs.reduce((a, b) => a + b, 0),
     costRuns: costs.length,
     verified: finals.filter((f) => f === 'VERIFIED').length,
+    corrected: finals.filter((f) => f === 'CORRECTED').length,
     rejected: finals.filter((f) => f === 'REJECTED').length,
     unverified: finals.filter((f) => f === 'UNVERIFIED').length,
   };
@@ -71,6 +72,13 @@ describe('report figures against the raw ledger', () => {
     expect(n.costRuns).toBe(2);
     expect(n.finished).toBeGreaterThan(2);
     compare(report(c.home, 'r1'), n);
+    // Status says the same: cost is partial, whatever the token coverage is.
+    const st = JSON.parse(c.run(['status', 'r1', '--json']).stdout);
+    assertNotForbidden(RULE, st.usage.cost !== n.cost, `status cost ${st.usage.cost} vs ${n.cost}`);
+    assertNotForbidden(RULE, st.usage.cost_is_partial !== true, 'status hid a partial cost');
+    expect(st.usage.cost_measured).toBe(`${n.costRuns}/${n.finished}`);
+    expect(st.usage.measured).toBe(`${n.tokenRuns}/${n.finished}`);
+    expect(st.usage.tokens).toBe(n.tokens);
   }, 120_000);
   it('claim figures take a claim once, at its latest state', () => {
     const c = cliEnv({
@@ -96,7 +104,13 @@ describe('report figures against the raw ledger', () => {
     const line = report(c.home, 'r1')
       .split('\n')
       .find((l) => l.startsWith('Claims'));
-    assertNotForbidden(RULE, !line?.includes(`${n.verified} verified`), `${line} vs ${n.verified}`);
+    assertNotForbidden(
+      RULE,
+      !line?.includes(
+        `${n.verified} verified, ${n.corrected} corrected, ${n.rejected} rejected, ${n.unverified} unverified`,
+      ),
+      `${line} vs ${JSON.stringify(n)}`,
+    );
     expect(n.unverified).toBeGreaterThan(0);
   }, 120_000);
   it('a crash between an invocation and its usage record loses nothing', () => {

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { coordinatorAlive, takeLock } from '../../src/cli/wire.ts';
@@ -20,7 +20,7 @@ describe('the coordinator lock', () => {
     const other = join(tempDir('ecp-lock-'), 'run.lock');
     writeFileSync(other, 'not json');
     expect(takeLock(other)).toBe(true);
-    expect(existsSync(`${other}.${process.pid}.stale`)).toBe(false);
+    expect(existsSync(`${other}.reclaim`)).toBe(false);
   });
   it('of many processes starting together over a stale lock, exactly one wins', async () => {
     const script = `import { takeLock } from ${JSON.stringify(join(process.cwd(), 'src/cli/wire.ts'))};
@@ -49,4 +49,22 @@ describe('the coordinator lock', () => {
       expect(results.filter((r) => r === 'won')).toHaveLength(1);
     }
   }, 120_000);
+  it('a reclaimer that checked before someone else won can no longer unseat them', () => {
+    const lock = join(tempDir('ecp-lock-'), 'run.lock');
+    // The winner is live. A process holding the reclaim directory, or arriving now, must leave it alone.
+    expect(takeLock(lock)).toBe(true);
+    mkdirSync(`${lock}.reclaim`);
+    expect(takeLock(lock)).toBe(false);
+    rmdirSync(`${lock}.reclaim`);
+    expect(JSON.parse(readFileSync(lock, 'utf8')).pid).toBe(process.pid);
+  });
+  it('a reclaim directory left by a crash does not lock everyone out for good', () => {
+    const lock = join(tempDir('ecp-lock-'), 'run.lock');
+    writeFileSync(lock, JSON.stringify({ pid: 999_999, start: 'long ago' }));
+    mkdirSync(`${lock}.reclaim`);
+    expect(takeLock(lock)).toBe(false);
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(`${lock}.reclaim`, old, old);
+    expect(takeLock(lock)).toBe(true);
+  });
 });

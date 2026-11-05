@@ -7,7 +7,9 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -89,24 +91,26 @@ export function takeLock(lockPath: string): boolean {
   mkdirSync(join(lockPath, '..'), { recursive: true });
   if (createLock(lockPath)) return true;
   if (coordinatorAlive(lockPath)) return false;
-  // Stale. Move it aside: a rename has one winner. If what moved turns out to be live, a faster process
-  // replaced the stale one after the check above, so it goes straight back.
-  const aside = `${lockPath}.${process.pid}.stale`;
+  // Stale. Reclaiming is serialised: only the holder of this directory may remove a lock, and it looks
+  // again once it holds it. Nothing but a reclaimer can replace an existing lock, so what it saw stays.
+  const reclaim = `${lockPath}.reclaim`;
   try {
-    renameSync(lockPath, aside);
+    if (Date.now() - statSync(reclaim).mtimeMs > 60_000) rmdirSync(reclaim);
+  } catch {
+    // None there, or someone else just cleared it.
+  }
+  try {
+    mkdirSync(reclaim);
   } catch {
     return false;
   }
-  if (coordinatorAlive(aside)) {
-    try {
-      linkSync(aside, lockPath);
-    } finally {
-      rmSync(aside, { force: true });
-    }
-    return false;
+  try {
+    if (coordinatorAlive(lockPath)) return false;
+    rmSync(lockPath, { force: true });
+    return createLock(lockPath);
+  } finally {
+    rmdirSync(reclaim);
   }
-  rmSync(aside, { force: true });
-  return createLock(lockPath);
 }
 
 export function dayUsageFrom(home: string, excludeRun: string, now: number) {

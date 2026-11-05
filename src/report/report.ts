@@ -287,6 +287,9 @@ export function renderStatus(i: {
       usage: {
         tokens: f.usage.measured ? f.usage.tokens : 'unavailable',
         cost: f.usage.cost_measured ? f.usage.cost_usd : 'unavailable',
+        // Cost is measured apart from tokens, and may cover fewer invocations.
+        cost_is_partial: f.usage.cost_measured > 0 && f.usage.cost_measured < f.usage.total,
+        cost_measured: `${f.usage.cost_measured}/${f.usage.total}`,
         measured: `${f.usage.measured}/${f.usage.total}`,
         invocations: f.invocations,
       },

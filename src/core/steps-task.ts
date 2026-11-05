@@ -24,6 +24,7 @@ import {
   failReadStep,
   holdFor,
   reviewSpecSha,
+  reviewableClaims,
   skipListFor,
 } from './steps-review.ts';
 import { completeIntegrationTask } from './steps-integrate.ts';
@@ -1025,7 +1026,16 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
     ['acceptance_criteria', t.spec.acceptance_criteria],
     ['diff', await e.p.git.diffText(t.base_commit as string, snap.commit)],
     ['gate_evidence', t.gate_runs[t.gate_runs.length - 1]?.results ?? []],
-    ['claims_as_data', snap.claims],
+    [
+      'claims_as_data',
+      [...reviewableClaims(e, t.task_id).values()].map((c) => ({
+        claim_id: c.claim_id,
+        claim: c.claim,
+        type: c.type,
+        value: c.value,
+        final: c.final,
+      })),
+    ],
     ['owner_covered_criteria', e.coveredAcs()],
   ]);
   const na = e.beginAttempt({

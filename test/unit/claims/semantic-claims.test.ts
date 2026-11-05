@@ -37,11 +37,36 @@ describe('a claim only a reviewer can settle', () => {
     const c = await record(semantic);
     const next = applyClaimReview(
       c,
-      { status: 'PASS', reason: 'checked', corrected_value: null },
+      { status: 'PASS', reason: 'see src/auth.ts:12', corrected_value: null },
       'rev',
     );
     expect(next?.final).toBe('VERIFIED');
     expect(next?.independent_review).toMatchObject({ status: 'PASS', reviewer: 'rev' });
+  });
+  it('a PASS whose reason names no evidence verifies nothing', async () => {
+    const c = await record(semantic);
+    for (const reason of ['checked', 'looks right to me', '']) {
+      const next = applyClaimReview(c, { status: 'PASS', reason, corrected_value: null }, 'rev');
+      assertNotForbidden('R-CLAIMS', next?.final === 'VERIFIED', `verified on: ${reason}`);
+    }
+  });
+  it("a digit in a sentence doesn't make a claim measurable", async () => {
+    const c = await record({ ...semantic, claim: 'version 2 is secure' });
+    assertNotForbidden('R-CLAIMS', c.final === 'VERIFIED', 'a file existing verified a claim');
+    expect(c.mechanical.status).toBe('NOT_APPLICABLE');
+  });
+  it('a correction that agrees with what code measured stands', async () => {
+    const c = await record({
+      claim: 'it has 5 files',
+      type: 'COUNT',
+      value: 5,
+      verifier: { kind: 'file_count', spec: { prefix: '' } },
+    });
+    expect(c.final).toBe('REJECTED');
+    const next = applyClaimReview(c, { status: 'FAIL', reason: 'no', corrected_value: 1 }, 'rev');
+    expect(next?.final).toBe('CORRECTED');
+    const wrong = applyClaimReview(c, { status: 'FAIL', reason: 'no', corrected_value: 9 }, 'rev');
+    expect(wrong?.final).toBe('REJECTED');
   });
   it('a reviewer FAIL rejects it, or corrects it when it gives the value', async () => {
     const c = await record(semantic);

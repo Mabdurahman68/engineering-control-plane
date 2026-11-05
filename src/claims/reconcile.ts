@@ -150,7 +150,11 @@ export async function reconcileClaims(input: {
       });
       // FACT, BEHAVIOUR and ARCHITECTURE go to the reviewer. A file existing doesn't make a claim about
       // security true, so a verifier decides only what it can measure.
-      const measurable = mechanicalType || HAS_NUMBER.test(c.claim) || typeof c.value === 'number';
+      // A number in a sentence isn't enough: the verifier has to measure a number, and the claim state it.
+      const measuresNumber = ['file_count', 'line_count', 'git_diff_stat', 'json_path'].includes(
+        c.verifier?.kind ?? 'none',
+      );
+      const measurable = mechanicalType || (typeof c.value === 'number' && measuresNumber);
       if (v.applicable && measurable) {
         const agrees = same(c.value, v.observed);
         rec.mechanical = {
@@ -199,6 +203,9 @@ export async function reconcileClaims(input: {
   return { claims: out, ok, detail };
 }
 
+// A path, a path and line, or a commit or blob ID. Prose isn't a reference to anything.
+const EVIDENCE_REF = /(^|[\s(`])([\w.-]+\/)*[\w-]+\.\w+(:\d+)?($|[\s),.`:])|\b[0-9a-f]{40}\b/;
+
 // What a reviewer's verdict does to a recorded claim (contracts §4). Code decides: mechanical evidence
 // isn't overruled, and a number with no verifier can't be marked VERIFIED by a model.
 export function applyClaimReview(
@@ -207,21 +214,26 @@ export function applyClaimReview(
   reviewer: string,
 ): Claim | null {
   if (r.status === 'NOT_REVIEWED') return null;
+  const corrected = r.corrected_value ?? null;
   const independent_review = {
     status: r.status,
     reviewer,
     reason: r.reason,
-    corrected_value: r.corrected_value ?? null,
+    corrected_value: corrected,
   };
   const out: Claim = { ...c, independent_review };
-  if (c.mechanical.status !== 'NOT_APPLICABLE') return out;
-  const semantic = c.type === 'FACT' || c.type === 'BEHAVIOUR' || c.type === 'ARCHITECTURE';
-  const numeric = HAS_NUMBER.test(c.claim) || typeof c.value === 'number';
+  const measured = c.mechanical.status !== 'NOT_APPLICABLE';
   if (r.status === 'PASS') {
-    if (semantic && !numeric && r.reason.trim()) out.final = 'VERIFIED';
+    const semantic = c.type === 'FACT' || c.type === 'BEHAVIOUR' || c.type === 'ARCHITECTURE';
+    const numeric = HAS_NUMBER.test(c.claim) || typeof c.value === 'number';
+    if (!measured && semantic && !numeric && EVIDENCE_REF.test(r.reason)) out.final = 'VERIFIED';
     return out;
   }
-  out.final =
-    r.corrected_value !== null && r.corrected_value !== undefined ? 'CORRECTED' : 'REJECTED';
+  if (corrected !== null) {
+    // A correction stands unless it conflicts with what code measured.
+    if (!measured || same(corrected, c.mechanical.observed)) out.final = 'CORRECTED';
+    return out;
+  }
+  if (!measured) out.final = 'REJECTED';
   return out;
 }
