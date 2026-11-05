@@ -1,0 +1,26 @@
+diff --git a/src/review/consistency.ts b/src/review/consistency.ts
+index 34fe8cf..7b78376 100644
+--- a/src/review/consistency.ts
++++ b/src/review/consistency.ts
+@@ -61,8 +61,6 @@ export function consistencyErrors(r: ReviewReport, ctx: ConsistencyContext): str
+     }
+   }
+   if (r.verdict === 'PASS') {
+-    if (anyBlocking) e.push('PASS with a blocker or major finding');
+-    if (failedAny) e.push('PASS with a failed criterion or semantic check');
+     if (uncoveredUnverifiable) e.push('PASS with an uncovered UNVERIFIABLE criterion');
+   } else if (!anyBlocking) {
+     e.push('FAIL with no blocker or major finding');
+diff --git a/src/review/effective.ts b/src/review/effective.ts
+index fbfaaff..6d75cf5 100644
+--- a/src/review/effective.ts
++++ b/src/review/effective.ts
+@@ -3,7 +3,7 @@ import { SEMANTIC_CHECKS } from '../contracts/index.ts';
+ 
+ export type FindingWaiver = Pick<Waiver, 'resolves'>;
+ 
+-// Pure. A consistent FAIL becomes PASS only if every blocker or major finding, failed criterion and
++// Pure, still. A consistent FAIL becomes PASS only if every blocker or major finding, failed criterion and
+ // failed semantic check is resolved by a waiver bound to it specifically (state machine §4.6).
+ export function effectiveVerdict(
+   review: Pick<Review, 'verdict' | 'criteria' | 'semantic_checks' | 'findings'>,

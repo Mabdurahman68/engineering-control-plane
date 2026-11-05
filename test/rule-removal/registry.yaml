@@ -1,0 +1,699 @@
+rules:
+  - id: R-C1-CONSISTENCY
+    source: §4A 1
+    patch: test/rule-removal/patches/R-C1-CONSISTENCY.patch
+    removes: A PASS over a blocker, or a failed criterion or check, is no longer invalid.
+    removed_predicate: anyBlocking and failedAny under a PASS
+    touches:
+      - src/review/consistency.ts
+    must_fail:
+      - file: test/unit/review/consistency.test.ts
+        test_name: verdict consistency rejects a PASS over a properly linked failure
+    must_pass:
+      - file: test/unit/review/consistency.test.ts
+        test_name: verdict consistency accepts a consistent PASS and a consistent FAIL
+      - file: test/unit/review/consistency.test.ts
+        test_name: verdict consistency rejects PASS with a failed criterion
+  - id: R-C1-EFFECTIVE
+    source: §4A 1
+    patch: test/rule-removal/patches/R-C1-EFFECTIVE.patch
+    removes: A waiver for a finding also clears its criterion, without being bound to it.
+    removed_predicate: w.resolves.criterion === c.ac
+    touches:
+      - src/review/effective.ts
+    must_fail:
+      - file: test/scenario/review/effective-verdict.test.ts
+        test_name: effective verdict a waiver for the finding, without its criterion, does not clear the criterion
+    must_pass:
+      - file: test/scenario/review/effective-verdict.test.ts
+        test_name: effective verdict stays FAIL when one of two failed criteria is waived
+      - file: test/scenario/review/effective-verdict.test.ts
+        test_name: effective verdict is PASS only when every failure is resolved by its own waiver
+  - id: R-C2-RESERVATION
+    source: §4A 2
+    patch: test/rule-removal/patches/R-C2-RESERVATION.patch
+    removes: A writer may take the last family a review needs.
+    removed_predicate: rungWouldStrandReview's check of the reserved families
+    touches:
+      - src/core/selectors.ts
+    must_fail:
+      - file: test/scenario/reservation.test.ts
+        test_name: "atomic family reservation three parallel tasks, all in flight: the third skips a rung, and integrated review stays possible"
+    must_pass:
+      - file: test/scenario/reservation.test.ts
+        test_name: atomic family reservation a failed attempt with no snapshot releases only after the liveness check is clean
+      - file: test/scenario/reservation.test.ts
+        test_name: atomic family reservation a stranded dispatch waits for a release, then goes ahead
+  - id: R-C3-TREE-ID
+    source: §4A 3
+    patch: test/rule-removal/patches/R-C3-TREE-ID.patch
+    removes: A tree changed by a gate command no longer voids the evidence.
+    removed_predicate: checkTreeId(tree, after) in the gate run
+    touches:
+      - src/gates/gates.ts
+    must_fail:
+      - file: test/scenario/tree-identity.test.ts
+        test_name: tested = reviewed = committed a gate that rewrites a tracked file discards its evidence and fails H-TREE-ID, on real git
+    must_pass:
+      - file: test/scenario/tree-identity.test.ts
+        test_name: tested = reviewed = committed evidence with an old tree hash does not count
+      - file: test/scenario/tree-identity.test.ts
+        test_name: tested = reviewed = committed a commit tree that differs from the snapshot fails the run
+  - id: R-C4-FINGERPRINT
+    source: §4A 4
+    patch: test/rule-removal/patches/R-C4-FINGERPRINT.patch
+    removes: The subject no longer distinguishes two findings.
+    removed_predicate: normaliseText(f.subject) in stallKey
+    touches:
+      - src/review/fingerprint.ts
+    must_fail:
+      - file: test/unit/review/fingerprint.test.ts
+        test_name: finding identity gives two findings in one file, with different subjects, different fingerprints
+      - file: test/unit/review/fingerprint.test.ts
+        test_name: finding identity overriding one leaves the other blocking
+    must_pass:
+      - file: test/unit/review/fingerprint.test.ts
+        test_name: finding identity rejects a duplicate subject with a different defect in one review
+      - file: test/unit/review/fingerprint.test.ts
+        test_name: finding identity allows an exact repeat
+  - id: R-C5-LAUNCH
+    source: §4A 5
+    patch: test/rule-removal/patches/R-C5-LAUNCH.patch
+    removes: A result in an unstarted attempt's directory is collected on resume.
+    removed_predicate: a.started before collecting a published result
+    touches:
+      - src/core/recovery.ts
+    must_fail:
+      - file: test/injection/launch-window.test.ts
+        test_name: killed in the launch window leaves no orphan, one worker a task, and fences a late result, over 16 runs
+    must_pass:
+      - file: test/injection/reattach-or-kill.test.ts
+        test_name: re-attaches only to a proven live relay
+    env:
+      ECP_LAUNCH_RUNS: "16"
+  - id: R-C5-ORPHAN
+    source: §4A 5
+    patch: test/rule-removal/patches/R-C5-ORPHAN.patch
+    removes: A new attempt reuses the abandoned worktree directory.
+    removed_predicate: t.worktree_gen + 1, a new directory for each attempt
+    touches:
+      - src/core/steps-task.ts
+    must_fail:
+      - file: test/injection/orphan-writer.test.ts
+        test_name: a writer that survives its attempt writes only to the abandoned worktree
+    must_pass:
+      - file: test/injection/reattach-or-kill.test.ts
+        test_name: re-attaches only to a proven live relay
+  - id: R-C6-NO-ELIGIBILITY
+    source: §4A 6
+    patch: test/rule-removal/patches/R-C6-NO-ELIGIBILITY.patch
+    removes: A shadow's quota or auth failure quarantines the rung for workers.
+    removed_predicate: shadow failures stay in the manager's skipUntil
+    touches:
+      - src/shadow/manager.ts
+    must_fail:
+      - file: test/shadow/no-eligibility-influence.test.ts
+        test_name: shadow_quota on a rung leaves worker eligibility, ladder and events unchanged, and the worker still goes there
+      - file: test/shadow/no-eligibility-influence.test.ts
+        test_name: shadow_auth on a rung leaves worker eligibility, ladder and events unchanged, and the worker still goes there
+    must_pass:
+      - file: test/shadow/no-eligibility-influence.test.ts
+        test_name: "shadow_quota on a rung remembers it only for the shadow: it skips that rung next time"
+      - file: test/shadow/no-eligibility-influence.test.ts
+        test_name: "shadow_auth on a rung remembers it only for the shadow: it skips that rung next time"
+  - id: R-C6-OUTCOMES
+    source: §4A 6
+    patch: test/rule-removal/patches/R-C6-OUTCOMES.patch
+    removes: Anything the rules can't decide is labelled for the shadow, not UNDETERMINED.
+    removed_predicate: the final return out('UNDETERMINED', null)
+    touches:
+      - src/shadow/outcome.ts
+    must_fail:
+      - file: test/shadow/outcomes.test.ts
+        test_name: observed-outcome rules next_rung versus wait stays UNDETERMINED
+      - file: test/shadow/outcomes.test.ts
+        test_name: observed-outcome rules a near match sets no label
+      - file: test/shadow/outcomes.test.ts
+        test_name: owner preference owner retry_task sets preference only, never an observed label
+    must_pass:
+      - file: test/shadow/outcomes.test.ts
+        test_name: "observed-outcome rules repair vs escalate: REPAIR_EXHAUSTED favours the shadow; TASK_PASSED favours the coordinator"
+      - file: test/shadow/outcomes.test.ts
+        test_name: "observed-outcome rules proceed vs repair with a prediction: exact_match favours the shadow"
+  - id: R-C6-REPLAY
+    source: §4A 6
+    patch: test/rule-removal/patches/R-C6-REPLAY.patch
+    removes: A replay no longer needs a disposable fixture, and no longer refuses an illegal proposal.
+    removed_predicate: isDisposableFixture and proposal_legal
+    touches:
+      - src/shadow/replay.ts
+    must_fail:
+      - file: test/shadow/replay.test.ts
+        test_name: paired replay refuses a private target
+      - file: test/shadow/replay.test.ts
+        test_name: paired replay refuses an illegal proposal
+    must_pass:
+      - file: test/shadow/replay.test.ts
+        test_name: paired replay restores the subject tree twice, runs both actions, and scores with hidden checks neither sees
+      - file: test/shadow/replay.test.ts
+        test_name: paired replay has nothing to replay when they agreed, or when there is no proposal
+  - id: R-C7-ISOLATION
+    source: §4A 7
+    patch: test/rule-removal/patches/R-C7-ISOLATION.patch
+    removes: The proof passes whatever an actor could reach, and whatever is missing.
+    removed_predicate: failures.length === 0 && incomplete.length === 0
+    touches:
+      - src/isolation/prove.ts
+    must_fail:
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when gate can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when codex-write can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when codex-read-only can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when claude-write can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when claude-read-only can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when opencode-write can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when opencode-read-only can read a canary
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when a write gets through
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails when an escaping child outlives kill-all, or its write lands
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails as incomplete on a missing actor
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors fails as incomplete on a missing surface
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors treats an attempt that errors as no evidence
+    must_pass:
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors passes when every attempt is denied, and is marked as fake
+      - file: test/unit/isolation-prove.test.ts
+        test_name: the isolation proof, with fake actors covers each actor against each surface the table closes to it
+  - id: R-C7-PROBE
+    source: §4A 7
+    patch: test/rule-removal/patches/R-C7-PROBE.patch
+    removes: The probe no longer needs a FAIL naming the planted defect.
+    removed_predicate: report.verdict !== 'FAIL' || !named
+    touches:
+      - src/review/contract-probe.ts
+    must_fail:
+      - file: test/fake-cli/contract-probe.test.ts
+        test_name: the contract probe fails on a FAIL naming something else
+    must_pass:
+      - file: test/fake-cli/contract-probe.test.ts
+        test_name: the contract probe passes a consistent FAIL that names the planted defect
+      - file: test/fake-cli/contract-probe.test.ts
+        test_name: the contract probe fails on free text
+  - id: B1-WAIVER
+    source: binding 1
+    patch: test/rule-removal/patches/B1-WAIVER.patch
+    removes: The fingerprint no longer carries the defect, so a different defect stays waived.
+    removed_predicate: defect_digest in the fingerprint
+    touches:
+      - src/review/fingerprint.ts
+    must_fail:
+      - file: test/scenario/review/waiver-successive.test.ts
+        test_name: waiver identity across successive reviews the four-review sequence, file-level finding
+      - file: test/scenario/review/waiver-successive.test.ts
+        test_name: waiver identity across successive reviews the same for a missing-code finding with no file, against a changed tree
+      - file: test/scenario/review/waiver-successive.test.ts
+        test_name: waiver identity through the engine the same subject with a different defect blocks, and is reported apart from new findings
+    must_pass:
+      - file: test/scenario/review/waiver-successive.test.ts
+        test_name: waiver identity through the engine a re-raised waived finding gives an effective PASS
+      - file: test/scenario/review/waiver-successive.test.ts
+        test_name: waiver identity through the engine a fourth adjudication escalates
+  - id: B2-ONE-RULE
+    source: binding 2
+    patch: test/rule-removal/patches/B2-ONE-RULE.patch
+    removes: A relay with no dispatch.started can be re-attached.
+    removed_predicate: "!p.started in planRecovery"
+    touches:
+      - src/core/recovery.ts
+    must_fail:
+      - file: test/injection/reattach-or-kill.test.ts
+        test_name: "the one rule, as a decision kills: no dispatch.started, relay alive"
+    must_pass:
+      - file: test/injection/reattach-or-kill.test.ts
+        test_name: the one rule, as a decision re-attaches only to a proven live relay
+      - file: test/injection/reattach-or-kill.test.ts
+        test_name: "the one rule, as a decision kills: no recorded PID"
+  - id: B2-ESCAPING
+    source: binding 2
+    patch: test/rule-removal/patches/B2-ESCAPING.patch
+    removes: A closed attempt is reopened on resume, so a late result counts.
+    removed_predicate: a.finished and a.class !== null in reconcileOpenAttempts
+    touches:
+      - src/core/recovery.ts
+    must_fail:
+      - file: test/injection/escaping-child.test.ts
+        test_name: a child that changes directory is only ever judged by its heartbeat and a held PID; a late result is fenced; the tree holds
+      - file: test/injection/escaping-child.test.ts
+        test_name: a child that rewrites argv is only ever judged by its heartbeat and a held PID; a late result is fenced; the tree holds
+      - file: test/injection/escaping-child.test.ts
+        test_name: a child that starts a new session is only ever judged by its heartbeat and a held PID; a late result is fenced; the tree holds
+      - file: test/injection/escaping-child.test.ts
+        test_name: a child that does all three is only ever judged by its heartbeat and a held PID; a late result is fenced; the tree holds
+    must_pass:
+      - file: test/injection/escaping-child.test.ts
+        test_name: "a real rung, with this stage unable to contain children refuses to run: nothing real is on the allowed list"
+  - id: B2-PROCCTL
+    source: binding 2
+    patch: test/rule-removal/patches/B2-PROCCTL.patch
+    removes: Anything but a clean zero no longer blocks; any command passes.
+    removed_predicate: the count check, and PROC_COMMANDS
+    touches:
+      - src/isolation/ecp-proc.ts
+    must_fail:
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake blocks on a non-zero count
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake blocks on no count
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake blocks on a count that is not a number
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake blocks on a helper failure
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake passes only the allowed commands and a validated attempt ID
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake caps writers at one per worker user once a real rung is configured
+    must_pass:
+      - file: test/unit/proc-control.test.ts
+        test_name: the process-control helper, as a fake calls kill-all before a re-dispatch, and a zero count lets it go on
+  - id: B3-PREDICTION
+    source: binding 3
+    patch: test/rule-removal/patches/B3-PREDICTION.patch
+    removes: A different subject counts as an exact match.
+    removed_predicate: f.stall_key === key
+    touches:
+      - src/shadow/predictions.ts
+    must_fail:
+      - file: test/shadow/prediction-match.test.ts
+        test_name: matching rules a different subject is near_match, which sets no label
+    must_pass:
+      - file: test/shadow/prediction-match.test.ts
+        test_name: the worked example is schema-valid
+      - file: test/shadow/prediction-match.test.ts
+        test_name: the worked example derives the stall key from the prediction, and reaches exact_match with nothing injected
+  - id: B4-FROZEN
+    source: binding 4
+    patch: test/rule-removal/patches/B4-FROZEN.patch
+    removes: The push and its verification follow the moving branch, not the frozen commit.
+    removed_predicate: sha as the push source, and at === sha
+    touches:
+      - src/publish/publisher.ts
+    must_fail:
+      - file: test/publish/frozen-sha.test.ts
+        test_name: "the frozen commit the branch moves after scanning, with a secret: the pushed commit is still the frozen one"
+    must_pass:
+      - file: test/publish/frozen-sha.test.ts
+        test_name: the frozen commit the argv holds a full SHA as the source, never a branch name
+      - file: test/publish/frozen-sha.test.ts
+        test_name: the frozen commit push.verified fails when the remote differs
+  - id: B4-BASE
+    source: binding 4
+    patch: test/rule-removal/patches/B4-BASE.patch
+    removes: A moved remote base no longer blocks.
+    removed_predicate: observed !== i.baseCommit && observed !== i.acceptedBase
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/base-drift.test.ts
+        test_name: base drift a moved remote base blocks, with no notice-based exception
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: passes every gate
+  - id: B4-PR
+    source: binding 4
+    patch: test/rule-removal/patches/B4-PR.patch
+    removes: A found PR that doesn't match is accepted.
+    removed_predicate: wrong.length in validatePrs
+    touches:
+      - src/publish/publisher.ts
+    must_fail:
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request wrong base fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request a different head SHA fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request a different head branch fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request not draft fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request closed fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request merged fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request from a fork fails
+      - file: test/publish/pr-validate.test.ts
+        test_name: recovery after a crash at pr.intent a found PR with wrong base blocks, with no edit, close or second PR
+      - file: test/publish/pr-validate.test.ts
+        test_name: recovery after a crash at pr.intent a found PR with a different head SHA blocks, with no edit, close or second PR
+      - file: test/publish/pr-validate.test.ts
+        test_name: recovery after a crash at pr.intent a found PR with not draft blocks, with no edit, close or second PR
+      - file: test/publish/pr-validate.test.ts
+        test_name: recovery after a crash at pr.intent a found PR with closed blocks, with no edit, close or second PR
+      - file: test/publish/pr-validate.test.ts
+        test_name: recovery after a crash at pr.intent a found PR with from a fork blocks, with no edit, close or second PR
+    must_pass:
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request a fully matching one passes
+      - file: test/publish/pr-validate.test.ts
+        test_name: validating a pull request none, or several, fail
+  - id: B5-HISTORY
+    source: binding 5
+    patch: test/rule-removal/patches/B5-HISTORY.patch
+    removes: Only the tip commit's tree is scanned.
+    removed_predicate: every commit in enumerateRange
+    touches:
+      - src/publish/history.ts
+    must_fail:
+      - file: test/publish/forbidden-history.test.ts
+        test_name: forbidden files across history a prohibited document, added then deleted, with a clean tip, blocks
+      - file: test/publish/forbidden-history.test.ts
+        test_name: forbidden files across history a path outside allowed_paths in any commit is blocked
+      - file: test/publish/forbidden-history.test.ts
+        test_name: content that appears only in a merge a forbidden file present only in a merge's resolved tree, then deleted, blocks
+      - file: test/publish/forbidden-history.test.ts
+        test_name: content that appears only in a merge a secret present only in a merge's resolved tree, then deleted, blocks
+    must_pass:
+      - file: test/publish/forbidden-history.test.ts
+        test_name: forbidden files across history a renamed exact copy at an allowed path is blocked by hash
+      - file: test/publish/forbidden-history.test.ts
+        test_name: forbidden files across history an edited copy with a marker string is blocked
+  - id: H-PUSH-SECRET
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-SECRET.patch
+    removes: The secret scan finds nothing.
+    removed_predicate: scanText over the range
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in a commit message blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in author fields blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in the PR title or body blocks
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-NAMES a private name in an author email, commit message or PR body blocks
+  - id: H-PUSH-NAMES
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-NAMES.patch
+    removes: The name scan finds nothing, and a missing list passes.
+    removed_predicate: scanForNames and !i.deny
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-NAMES a private name in an author email, commit message or PR body blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-NAMES a name in file content or a path, including one later deleted, blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-NAMES a missing or empty deny list blocks
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+  - id: H-PUSH-FILES
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-FILES.patch
+    removes: No path is checked against the allowlist or forbidden list.
+    removed_predicate: the loop over pairs
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-FILES a path outside the allowlist blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-FILES a forbidden name blocks, even on an allowed path
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+  - id: H-PUSH-TREE
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-TREE.patch
+    removes: The frozen tree needn't be the reviewed tree, nor the frozen value a full SHA.
+    removed_predicate: tree !== i.reviewedTree and FULL_SHA
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-TREE a tip tree different from the reviewed tree blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-TREE a frozen value that is not a full SHA blocks
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+  - id: H-PUSH-BRANCH
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-BRANCH.patch
+    removes: Any destination passes.
+    removed_predicate: checkBranch in the gate
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BRANCH a branch outside the run namespace blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BRANCH main as the push target blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BRANCH master as the push target blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BRANCH refs/heads/main as the push target blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BRANCH the base branch as the push target blocks, whatever it is called
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BRANCH the build's own rule is exact
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+  - id: H-PUSH-BASE
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-BASE.patch
+    removes: The remote base needn't be the recorded one.
+    removed_predicate: observed !== i.baseCommit && observed !== i.acceptedBase
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-BASE a remote base that has moved blocks
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+  - id: H-PUSH-REMOTE
+    source: push gate
+    patch: test/rule-removal/patches/H-PUSH-REMOTE.patch
+    removes: An unexpected ref, or a destination needing a force, passes.
+    removed_predicate: the namespace scan, and ok !== true
+    touches:
+      - src/publish/gate.ts
+    must_fail:
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-REMOTE an unexpected ref on the remote, in the run namespace, blocks
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-REMOTE a destination that is not an ancestor blocks, and is never forced
+    must_pass:
+      - file: test/publish/gates.test.ts
+        test_name: a clean candidate passes every gate
+      - file: test/publish/gates.test.ts
+        test_name: H-PUSH-SECRET a secret in an earlier commit, not the tip, blocks
+  - id: AC-E
+    source: AC-E
+    patch: test/rule-removal/patches/AC-E.patch
+    removes: A run with a mock review goes on as if it were real.
+    removed_predicate: e.s.mock_review_seen in verify
+    touches:
+      - src/core/steps-verify.ts
+    must_fail:
+      - file: test/publish/publish.test.ts
+        test_name: "AC-E: a mock run never publishes ends at MOCK_RUN_COMPLETE, with no gh call and nothing on the remote"
+    must_pass:
+      - file: test/publish/publish.test.ts
+        test_name: a verified run publishes pushes its own branch, opens one draft PR, and validates it
+      - file: test/publish/publish.test.ts
+        test_name: a verified run publishes the report states public visibility, and that merging stays with the owner
+  - id: AC-I
+    source: AC-I
+    patch: test/rule-removal/patches/AC-I.patch
+    removes: A shadow proposal leaves a mark on the steering events.
+    removed_predicate: the manager appending only shadow.* events
+    touches:
+      - src/shadow/manager.ts
+    must_fail:
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_agree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_disagree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_illegal changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_other changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_malformed changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_predict changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: review fail shadow_agree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: review fail shadow_disagree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: review fail shadow_illegal changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: review fail shadow_other changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: review fail shadow_malformed changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: review fail shadow_predict changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: worker quota shadow_agree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: worker quota shadow_disagree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: worker quota shadow_illegal changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: worker quota shadow_other changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: worker quota shadow_malformed changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: worker quota shadow_predict changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: secret escalates shadow_agree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: secret escalates shadow_disagree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: secret escalates shadow_illegal changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: secret escalates shadow_other changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: secret escalates shadow_malformed changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: secret escalates shadow_predict changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: acceptance fail shadow_agree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: acceptance fail shadow_disagree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: acceptance fail shadow_illegal changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: acceptance fail shadow_other changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: acceptance fail shadow_malformed changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: acceptance fail shadow_predict changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: DEEP plan review shadow_agree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: DEEP plan review shadow_disagree changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: DEEP plan review shadow_illegal changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: DEEP plan review shadow_other changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: DEEP plan review shadow_malformed changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: DEEP plan review shadow_predict changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: invariance across seeded runs, with every failure behaviour 60 seeds, each against every shadow behaviour
+    must_pass:
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_timeout changes no steering event"
+      - file: test/fuzz/shadow-invariance/invariance.test.ts
+        test_name: "logical steering invariance: happy shadow_quota changes no steering event"
+    env:
+      ECP_FUZZ_RUNS: "50"
+  - id: AC-K
+    source: AC-K
+    patch: test/rule-removal/patches/AC-K.patch
+    removes: An API-key rung is a normal next step, and a subscription rung can be handed a key.
+    removed_predicate: apiKeyBarred, and auth_mode on env_allowlist
+    touches:
+      - src/core/engine.ts
+    must_fail:
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: a subscription rung failing on quota, never reaches an API-key rung
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: a subscription rung failing on auth, never reaches an API-key rung
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: a subscription rung failing a subscription rung is never handed a credential, whatever its configuration says
+    must_pass:
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: a subscription rung failing an API-key rung the owner put first is still theirs to use, until a subscription fails
+      - file: test/scenario/fallback/auth-mode.test.ts
+        test_name: auth_mode is never written by any code path
+  - id: R-REAL-WORKER-GUARD
+    source: plan H.1, I.1, J
+    patch: test/rule-removal/patches/R-REAL-WORKER-GUARD.patch
+    removes: An unpinned CLI, anywhere, is accepted as a fixture.
+    removed_predicate: the location and pin checks in authoriseClis
+    touches:
+      - src/workers/relay/real-worker-guard.ts
+    must_fail:
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a marker-bearing wrapper first on PATH is refused by the guard, by name
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a marker-bearing wrapper first on PATH never runs for --version, --help or a login check
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a marker-bearing wrapper first on PATH never runs through the adapter probe or dispatch
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a marker-bearing wrapper first on PATH never runs for doctor, run, resume, eval or replay
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a marker-bearing wrapper first on PATH never runs when a run resumes onto it
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a marker-bearing wrapper first on PATH never runs for a shadow dispatch
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a fixture copy elsewhere first on PATH is refused by the guard, by name
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a fixture copy elsewhere first on PATH never runs for --version, --help or a login check
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a fixture copy elsewhere first on PATH never runs through the adapter probe or dispatch
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a fixture copy elsewhere first on PATH never runs for doctor, run, resume, eval or replay
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a fixture copy elsewhere first on PATH never runs for a shadow dispatch
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink leaving the directory first on PATH is refused by the guard, by name
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink leaving the directory first on PATH never runs for --version, --help or a login check
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink leaving the directory first on PATH never runs through the adapter probe or dispatch
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink leaving the directory first on PATH never runs for doctor, run, resume, eval or replay
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink leaving the directory first on PATH never runs when a run resumes onto it
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink leaving the directory first on PATH never runs for a shadow dispatch
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink into the directory, from elsewhere first on PATH is refused by the guard, by name
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink into the directory, from elsewhere first on PATH never runs for doctor, run, resume, eval or replay
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: a symlink into the directory, from elsewhere first on PATH never runs when a run resumes onto it
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: what the guard accepts refuses a real-looking CLI first on PATH, and a missing one
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: what the guard accepts refuses when a pinned file has been modified
+    must_pass:
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: what the guard accepts accepts the pinned fixtures, and only on an absolute PATH
+      - file: test/fake-cli/real-worker-guard.test.ts
+        test_name: the real-worker chain holds the constant false in this build

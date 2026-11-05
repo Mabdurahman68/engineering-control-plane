@@ -1,0 +1,13 @@
+diff --git a/src/publish/gate.ts b/src/publish/gate.ts
+index 6ef0649..d00f301 100644
+--- a/src/publish/gate.ts
++++ b/src/publish/gate.ts
+@@ -129,7 +129,7 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+ 
+   // H-PUSH-FILES: allowlist per path; forbidden path and content hash; marker strings.
+   if (!i.forbidden) fail('H-PUSH-FILES', 'forbidden list is missing or empty');
+-  for (const p of pairs) {
++  for (const p of pairs.slice(0, 0)) {
+     if (!matchesAny(i.allowedPaths, p.path))
+       fail('H-PUSH-FILES', `${p.path} isn't on the allowlist`);
+     if (!i.forbidden) continue;

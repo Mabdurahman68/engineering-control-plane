@@ -1,0 +1,13 @@
+diff --git a/src/review/consistency.ts b/src/review/consistency.ts
+index 34fe8cf..7b78376 100644
+--- a/src/review/consistency.ts
++++ b/src/review/consistency.ts
+@@ -61,8 +61,6 @@ export function consistencyErrors(r: ReviewReport, ctx: ConsistencyContext): str
+     }
+   }
+   if (r.verdict === 'PASS') {
+-    if (anyBlocking) e.push('PASS with a blocker or major finding');
+-    if (failedAny) e.push('PASS with a failed criterion or semantic check');
+     if (uncoveredUnverifiable) e.push('PASS with an uncovered UNVERIFIABLE criterion');
+   } else if (!anyBlocking) {
+     e.push('FAIL with no blocker or major finding');

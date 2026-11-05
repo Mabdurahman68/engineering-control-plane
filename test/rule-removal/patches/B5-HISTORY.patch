@@ -1,0 +1,13 @@
+diff --git a/src/publish/history.ts b/src/publish/history.ts
+index a6a2a1f..0634401 100644
+--- a/src/publish/history.ts
++++ b/src/publish/history.ts
+@@ -25,7 +25,7 @@ export async function enumerateRange(
+     .filter(Boolean);
+   const inBase = new Set((await lsTree(repo, base)).map((p) => `${p.blob}\0${p.path}`));
+   const seen = new Map<string, PathBlob>();
+-  for (const c of commits) {
++  for (const c of commits.slice(0, 1)) {
+     for (const p of await lsTree(repo, c)) {
+       const key = `${p.blob}\0${p.path}`;
+       if (!inBase.has(key)) seen.set(key, p);

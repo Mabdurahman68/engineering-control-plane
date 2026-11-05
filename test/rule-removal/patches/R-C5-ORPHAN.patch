@@ -1,0 +1,13 @@
+diff --git a/src/core/steps-task.ts b/src/core/steps-task.ts
+index 6512b23..98eca95 100644
+--- a/src/core/steps-task.ts
++++ b/src/core/steps-task.ts
+@@ -150,7 +150,7 @@ function effectiveWriters(e: Engine): number {
+ }
+ 
+ export async function ensureWorktree(e: Engine, t: TaskRec, base: string) {
+-  const gen = t.worktree_gen + 1;
++  const gen = 1;
+   const path = e.p.paths.worktree(e.o.runId, t.task_id, gen);
+   await e.p.git.removeWorktree(path);
+   if (t.worktree) await e.p.git.removeWorktree(t.worktree);

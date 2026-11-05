@@ -1,0 +1,13 @@
+diff --git a/src/shadow/manager.ts b/src/shadow/manager.ts
+index c14e882..240308f 100644
+--- a/src/shadow/manager.ts
++++ b/src/shadow/manager.ts
+@@ -243,7 +243,7 @@ export class ShadowManager implements DecisionObserver {
+     if (cls !== 'OK') {
+       // Only the shadow's own memory changes. The worker finds out for itself on its next dispatch.
+       if (cls === 'QUOTA' || cls === 'RATE_LIMIT' || cls === 'AUTH')
+-        this.skipUntil.set(p.rung, e.now() + 3_600_000);
++        e.append('worker.quarantined', p.rec.task_id, { rung: p.rung, until: e.now() + 3_600_000, reason: cls, scope: 'run' });
+       return this.unavailable(p, cls);
+     }
+     const parsed = parseBlock(raw.final_message, shadowReportSchema);

@@ -1,0 +1,13 @@
+diff --git a/src/review/fingerprint.ts b/src/review/fingerprint.ts
+index a5af74c..a98a3cc 100644
+--- a/src/review/fingerprint.ts
++++ b/src/review/fingerprint.ts
+@@ -12,7 +12,7 @@ export function stallKey(f: {
+   finding_type: string;
+   subject: string;
+ }): string {
+-  return [f.criterion, f.file ?? '', f.category, f.finding_type, normaliseText(f.subject)].join(
++  return [f.criterion, f.file ?? '', f.category, f.finding_type, ''].join(
+     '|',
+   );
+ }

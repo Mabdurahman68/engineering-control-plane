@@ -1,0 +1,13 @@
+diff --git a/src/core/recovery.ts b/src/core/recovery.ts
+index 31bdb00..4ac1bc4 100644
+--- a/src/core/recovery.ts
++++ b/src/core/recovery.ts
+@@ -117,7 +117,7 @@ export async function reconcileOpenAttempts(e: Engine): Promise<void> {
+     }
+     // The relay is gone. If it published before dying, the result is still good, and is collected.
+     let raw: RawOutcome = lostOutcome();
+-    if (adapter && a.started) {
++    if (adapter) {
+       const handle = await adapter.attach({
+         attempt_id: a.attempt_id,
+         out_dir: a.out_dir,

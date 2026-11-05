@@ -1,0 +1,13 @@
+diff --git a/src/publish/gate.ts b/src/publish/gate.ts
+index 6ef0649..dda66c3 100644
+--- a/src/publish/gate.ts
++++ b/src/publish/gate.ts
+@@ -76,7 +76,7 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+   if (!FULL_SHA.test(i.frozen)) fail('H-PUSH-TREE', `frozen commit isn't a full SHA: ${i.frozen}`);
+ 
+   // H-PUSH-BRANCH
+-  const branch = checkBranch(i);
++  const branch = i.destination === '' ? checkBranch(i) : null;
+   if (branch) failures.push(branch);
+ 
+   // H-PUSH-TREE

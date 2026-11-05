@@ -1,0 +1,13 @@
+diff --git a/src/review/consistency.ts b/src/review/consistency.ts
+index 34fe8cf..2ee71d9 100644
+--- a/src/review/consistency.ts
++++ b/src/review/consistency.ts
+@@ -12,7 +12,7 @@ export type ConsistencyContext = {
+   requireFileCoverage: boolean;
+ };
+ 
+-// Contracts §5, with the one recorded extension for uncovered UNVERIFIABLE criteria.
++// Contracts §5 (edited), with the one recorded extension for uncovered UNVERIFIABLE criteria.
+ export function consistencyErrors(r: ReviewReport, ctx: ConsistencyContext): string[] {
+   const e: string[] = [];
+   const f = r.findings;
