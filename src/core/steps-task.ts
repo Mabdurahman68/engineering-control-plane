@@ -944,14 +944,9 @@ async function stepReviewing(e: Engine, t: TaskRec): Promise<boolean> {
     );
     return true;
   }
-  // A FAIL that was recorded, but the crash fell before it was routed. Same policy either way.
+  // A review that was recorded, but the crash fell before it was routed. Same policy, FAIL or PASS.
   const lastReview = t.reviews[t.reviews.length - 1];
-  if (
-    lastReview &&
-    lastReview.tree === snap.tree &&
-    lastReview.effective === 'FAIL' &&
-    !lastReview.routed
-  ) {
+  if (lastReview && lastReview.tree === snap.tree && !lastReview.routed) {
     if (routeReview(e, t, snap.tree, lastReview.review_id)) return true;
   }
   if (filledSlots(t, snap.tree).length >= e.quorum()) return completeTask(e, t);
