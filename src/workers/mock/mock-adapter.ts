@@ -142,6 +142,8 @@ export class MockAdapter implements WorkerAdapter {
   private readonly runs = new Map<string, MockRun>();
   private nextPid = 1000;
   log: { step: string; task: string | null; rung: string; n: number; behaviour: string }[] = [];
+  // A mock agreeing has to know what it's agreeing with. Only this test double can peek.
+  shadowOracle: ((attemptId: string) => { action: string; target: string | null }) | null = null;
 
   constructor(o: {
     script: MockScript;
@@ -509,11 +511,11 @@ export class MockAdapter implements WorkerAdapter {
         return ok(block({ ruling, reason: 'ruled', evidence: [] }));
       }
       default:
-        return ok(this.shadowOutput(behaviour, args));
+        return ok(this.shadowOutput(behaviour, args, req.attempt_id));
     }
   }
 
-  private shadowOutput(behaviour: string, args: any): string {
+  private shadowOutput(behaviour: string, args: any, attemptId = ''): string {
     const base = {
       target: null,
       reason: 'scripted',
@@ -544,8 +546,15 @@ export class MockAdapter implements WorkerAdapter {
         });
       case 'shadow_malformed':
         return '```json\n{nope\n```';
-      default:
-        return block({ ...base, action: args?.action ?? '__coordinator__', reason: 'agree' });
+      default: {
+        const seen = this.shadowOracle?.(attemptId);
+        return block({
+          ...base,
+          action: args?.action ?? seen?.action ?? 'other',
+          target: seen?.target ?? null,
+          reason: 'agree',
+        });
+      }
     }
   }
 

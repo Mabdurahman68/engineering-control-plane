@@ -74,3 +74,11 @@ Reports written by a model (`plan.v1`, `worker_report.v1`, `challenge.v1`, `revi
 ## Snapshot intent
 
 The frozen event list has no `snapshot.intent`. The finished, unclassified attempt is the durable intent: a crash redoes the snapshot idempotently on the untouched tree, because no attempt can start until this one is classified.
+
+## What logical steering invariance compares
+
+AC-I compares ordered event content. It leaves out `shadow.*`, and the ledger envelope (`seq`, `prev`, `hash`, `at`). It also leaves out what the clock or the OS supplies and steers nothing: `heartbeat`, `host.sleep_detected`, and process IDs and start times. `decision.made` stays in.
+
+## When the run waits for shadow proposals
+
+Only when a run finishes. A pause or escalation doesn't wait: the wait would let the shadow move time, and `onResume` settles anything left open.

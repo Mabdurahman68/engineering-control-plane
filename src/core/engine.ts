@@ -34,7 +34,7 @@ import {
   familyOfRung,
   rungWouldStrandReview,
 } from './selectors.ts';
-import { PAUSED, RUN_STOPPING } from './tables.ts';
+import { PAUSED, RUN_STOPPING, RUN_TERMINAL } from './tables.ts';
 import { stepTasks } from './steps-task.ts';
 import { stepPlanning, stepPreflight } from './steps-plan.ts';
 import { stepIntegrating } from './steps-integrate.ts';
@@ -189,6 +189,7 @@ export class Engine {
     try {
       return fn();
     } catch (err) {
+      if (err instanceof SimulatedKill) throw err;
       this.append('shadow.unavailable', null, {
         decision_id: decisionId,
         status: 'SHADOW_UNAVAILABLE',
@@ -622,6 +623,21 @@ export class Engine {
       accept_policy: opts.acceptPolicy ? opts.policySha : undefined,
       extend_budget: opts.extendBudget,
     });
+    // Always, so an observer's presence can't change the steering record.
+    await this.refreshHealth(Object.keys(this.p.policy.workers.rungs));
+    if (this.p.observer?.onResume) {
+      try {
+        await this.p.observer.onResume();
+      } catch (err) {
+        if (err instanceof SimulatedKill) throw err;
+        this.append('shadow.unavailable', null, {
+          decision_id: null,
+          status: 'SHADOW_UNAVAILABLE',
+          class: 'OBSERVER_ERROR',
+          detail: String(err),
+        });
+      }
+    }
     try {
       await reconcileOpenAttempts(this);
       if (this.s.pending_decision) this.completeDecision();
@@ -692,7 +708,10 @@ export class Engine {
   }
 
   private async finish(): Promise<RunExit> {
-    await this.drainObserver();
+    // Only a finished run waits for proposals. A pause or an escalation resumes later, and a wait there
+    // would let the shadow move time.
+    if (['READY_FOR_HUMAN_MERGE', 'PUSH_BLOCKED', ...RUN_TERMINAL].includes(this.s.state))
+      await this.drainObserver();
     const done = RUN_STOPPING.includes(this.s.state);
     if (done) {
       await this.cleanupWorktrees();
@@ -728,6 +747,13 @@ export class Engine {
         (fn) => this.listeners.push(fn),
       );
     }
+    // A moment past the limit, so an observer stopped by the same limit can finish recording that.
+    if (!settled)
+      await this.p.clock.idle(
+        this.now() + 1000,
+        () => settled,
+        (fn) => this.listeners.push(fn),
+      );
     if (settled) await done;
   }
 
@@ -802,6 +828,16 @@ export class Engine {
   private async idle() {
     const obs = this.observe(() => this.p.observer?.nextWake() ?? null) ?? null;
     let wake = this.wakeAt;
+    // A waiting task re-checks exactly when a rung comes back, so another reason to wake (a shadow
+    // timer, say) can't reveal anything earlier than this would.
+    if (Object.values(this.s.tasks).some((t) => t.state === 'TASK_WAITING_WORKER')) {
+      const now = this.now();
+      const untils = [
+        ...Object.values(this.s.quarantine).map((q) => q.until),
+        ...Object.values(this.s.backoff).map((b) => b.until),
+      ];
+      for (const u of untils) if (u !== null && u > now && (wake === null || u < wake)) wake = u;
+    }
     if (obs !== null && (wake === null || obs < wake)) wake = obs;
     if (this.notified) {
       this.notified = false;

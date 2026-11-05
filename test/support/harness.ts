@@ -22,6 +22,7 @@ import { RealMockWorld } from '../../src/workers/mock/real-world.ts';
 import { FsRunStore } from '../../src/worktree/fs-store.ts';
 import { RealGit } from '../../src/worktree/real-git.ts';
 import { makeRepo, tempDir } from './repo.ts';
+import { ShadowManager } from '../../src/shadow/manager.ts';
 import { SimGit, SimRunner, VirtualClock } from './sim.ts';
 
 const realPolicy = loadPolicy('policy');
@@ -211,6 +212,7 @@ export function makeSim(
     plan?: ReturnType<typeof defaultPlan>;
     observer?: DecisionObserver | null;
     prep?: (sim: any) => void;
+    shadow?: boolean;
     adapterOverride?: (sim: {
       git: SimGit;
       clock: VirtualClock;
@@ -285,6 +287,23 @@ export function makeSim(
     { runId: 'run1', spec, specSha: sha256(canonical(spec)), policySha: 'b'.repeat(64) },
     sim.ports,
   );
+  if (o.shadow) {
+    sim.ports.observer = new ShadowManager(() => sim.engine, {
+      scratchDir: (id) => `/sim/scratch/${id}`,
+      transport: 'mock',
+    });
+    adapter.shadowOracle = (attemptId) => {
+      const id = /DP-\d+/.exec(attemptId)?.[0];
+      const made = loadLedger(ledger).events.find(
+        (e) => e.type === 'decision.made' && e.data.decision_id === id,
+      );
+      return {
+        action: String(made?.data.action ?? 'other'),
+        target: (made?.data.target as string) ?? null,
+      };
+    };
+    sim.git.worktrees.set('/sim/scratch', { files: {}, head: sim.git.root });
+  }
   o.prep?.(sim);
   return sim as Sim;
 }

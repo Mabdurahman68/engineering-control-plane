@@ -137,7 +137,9 @@ function tail(sim: Sim) {
 export type Fuzz = { sim: Sim; steps: number; ended: string; violations: unknown[] };
 
 // A run's script comes from its seed, so a failure replays exactly.
-export async function fuzzRun(seed: number): Promise<Fuzz> {
+export type FuzzOptions = { shadow?: string | 'absent'; noStops?: boolean };
+
+export async function fuzzRun(seed: number, opts: FuzzOptions = {}): Promise<Fuzz> {
   const r = rng(seed);
   const pick = <T>(xs: readonly T[]) => xs[Math.floor(r() * xs.length)];
   const script: any[] = [];
@@ -161,12 +163,15 @@ export async function fuzzRun(seed: number): Promise<Fuzz> {
     if (r() < 0.1) entry.delay_ms = Math.floor(r() * 120_000);
     script.push(entry);
   }
+  if (opts.shadow && opts.shadow !== 'absent')
+    script.unshift({ match: { step: 'shadow' }, behaviour: opts.shadow });
   const probes: any = {};
   if (r() < 0.15) probes[pick(['mock-openai', 'mock-anthropic', 'mock-glm'])] = pick(PROBES);
   const depth = pick(DEPTHS);
   const sim = makeSim({
     script,
     probes,
+    shadow: Boolean(opts.shadow && opts.shadow !== 'absent'),
     spec: { requested_depth: depth, declared_risk: pick(RISKS) },
     plan:
       depth === 'QUICK'
@@ -191,7 +196,9 @@ export async function fuzzRun(seed: number): Promise<Fuzz> {
       if (r() < 0.1) p.settings.caps.run.invocations = 3 + Math.floor(r() * 10);
     },
   });
-  const stopPoint = r() < 0.4 ? pick(STOPS) : null;
+  const wantStop = r() < 0.4;
+  const stopPick = pick(STOPS);
+  const stopPoint = wantStop && !opts.noStops ? stopPick : null;
   const stopAt = 1 + Math.floor(r() * 3);
   const stopKind = pick(['pause', 'cancel', 'crash', 'crash', 'crash'] as const);
   let hits = 0;

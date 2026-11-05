@@ -102,4 +102,6 @@ export interface DecisionObserver {
   // Periodic chance to record finished proposals; has no return value on purpose.
   poll(): void;
   nextWake(): number | null;
+  // After a crash: finish, re-dispatch or give up on proposals left open. Can't change the outcome.
+  onResume?(): Promise<void>;
 }
