@@ -686,6 +686,7 @@ export class Engine {
   }
 
   private shouldContinueAfterStop(): boolean {
+    // Only a real verified candidate reaches this state, and the tables have no other way to PUSHING.
     return (
       this.s.state === 'READY_FOR_HUMAN_MERGE' &&
       this.spec.publish !== undefined &&

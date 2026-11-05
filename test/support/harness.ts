@@ -362,6 +362,7 @@ export function decision(escalationId: string, optionId: string, target?: string
 
 export type RealSim = {
   repo: string;
+  home: string;
   base: string;
   git: RealGit;
   store: FsRunStore;
@@ -408,6 +409,7 @@ export function makeReal(
     ...o.spec,
   });
   const sim: any = {
+    home,
     repo: r.dir,
     base: r.base,
     git,

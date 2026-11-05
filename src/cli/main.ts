@@ -181,7 +181,7 @@ async function cmdClean(args: string[]) {
   const ids = args[0] ? [args[0]] : existsSync(runsDir) ? readdirSync(runsDir) : [];
   for (const id of ids) {
     const { state } = readRun(id);
-    if (['ESCALATION_REQUIRED', 'FAILED'].includes(state.state) && !args.includes('--force'))
+    if (['ESCALATION_REQUIRED', 'FAILED'].includes(state.state) && !args.includes('--all'))
       continue;
     if (state.state.startsWith('PAUSED_')) continue;
     rmSync(join(ecpHome(), 'worktrees', id), { recursive: true, force: true });

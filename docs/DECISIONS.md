@@ -82,3 +82,11 @@ AC-I compares ordered event content. It leaves out `shadow.*`, and the ledger en
 ## When the run waits for shadow proposals
 
 Only when a run finishes. A pause or escalation doesn't wait: the wait would let the shadow move time, and `onResume` settles anything left open.
+
+## Push gate on a merge's content
+
+The history scan works from each commit's whole tree, not from diffs, so content from a merge resolution can't be missed. The name scan also covers paths and commit metadata.
+
+## A pause isn't a stop for shadow proposals
+
+A paused run leaves proposals outstanding, to settle on resume.

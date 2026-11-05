@@ -165,7 +165,7 @@ describe('ecp, as a process', () => {
     expect(existsSync(join(c.home, 'worktrees/r1'))).toBe(true);
     c.run(['clean', 'r1']);
     expect(existsSync(join(c.home, 'worktrees/r1'))).toBe(true);
-    c.run(['clean', 'r1', '--force']);
+    c.run(['clean', 'r1', '--all']);
     expect(existsSync(join(c.home, 'worktrees/r1'))).toBe(false);
   });
   it('metrics: figures across runs', () => {

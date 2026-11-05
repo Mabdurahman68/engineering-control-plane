@@ -207,6 +207,7 @@ export type RunR = {
     pr_validated: boolean;
     accepted_base: string | null;
     last_error: string | null;
+    push_intent: boolean;
   };
   pending_request: 'pause' | 'cancel' | null;
   shadow: {
@@ -296,6 +297,7 @@ export function initialRun(): RunR {
       pr_validated: false,
       accepted_base: null,
       last_error: null,
+      push_intent: false,
     },
     pending_request: null,
     shadow: {
@@ -822,6 +824,7 @@ function apply(s: RunR, ev: LedgerEvent): void {
     case 'merge.conflict':
       return;
     case 'tree.identity_checked':
+      if (d.phase === 'push') s.publish.gate_ok = true;
       if (d.attempt_id && s.attempts[d.attempt_id]) s.attempts[d.attempt_id].tree_ok = d.ok;
       if (d.stage && s.state === 'VERIFYING' && !s.verify.passed_stages.includes(d.stage)) {
         s.verify.passed_stages.push(d.stage);
@@ -886,6 +889,9 @@ function apply(s: RunR, ev: LedgerEvent): void {
     case 'push.gate_failed':
       s.publish.gate_ok = false;
       s.publish.last_error = d.reason ?? null;
+      return;
+    case 'push.intent':
+      s.publish.push_intent = true;
       return;
     case 'push.done':
       s.publish.pushed = true;
