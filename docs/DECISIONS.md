@@ -90,3 +90,25 @@ The history scan works from each commit's whole tree, not from diffs, so content
 ## A pause isn't a stop for shadow proposals
 
 A paused run leaves proposals outstanding, to settle on resume.
+
+## Where the fake-actor proof goes
+
+Architecture §6 saves the isolation proof as `docs/isolation-proof.json`. That's for the dedicated machine, where it's real evidence. A fake-actor proof from this build goes to `$ECP_HOME/isolation-proof.json`, so it can't be read as evidence about this repository.
+
+## An API key is never the next step down
+
+Nothing enforced AC-K until M10M, because the default rungs are all subscriptions. Now, once a subscription rung is quarantined for quota or auth, API-key rungs are barred for the rest of that quarantine. An API-key rung the owner put first still runs. A subscription rung is never handed a credential, whatever `credential_env` says.
+
+## A cancelled run doesn't wait for shadow proposals
+
+The end-of-run wait exists to let proposals finish. An operator's cancel means stop, so unfinished proposals are stopped and marked unavailable at once. A proposal given up on, for any reason, has its process stopped: marking it unavailable isn't enough.
+
+## `ecp-proc` isn't wired into the engine
+
+The coordinator's side of the helper is built and tested against a fake, as the binding table asks. Nothing calls it at run time in this build, because no second user exists to control. M11 wires it, with the conditions recorded above.
+
+## Real-worker guard, beyond the plan's wording
+
+A symlink from elsewhere into the fixture directory is refused too, even though it resolves to a pinned file: its launcher would run whatever core sits beside the link. A `PATH` with an empty or relative entry before the match is refused, since the first match can't be known from another directory.
+
+**Residual limit:** the launchers call `node` by name, so a `node` earlier on `PATH` would run instead of the pinned one. The guard doesn't check it. No untrusted actor runs on this machine in this build.

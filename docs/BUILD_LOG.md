@@ -21,3 +21,4 @@ Deferred from M7 to M9, per the plan's section B: `test/injection/launch-window`
 | M9I | `pnpm test test/unit/isolation-prove` | 0 | 79c311aa7a700b56b7a24959ed036254d64035f7 | 5s |
 | M10 | `pnpm test test/eval` | 0 | 79c311aa7a700b56b7a24959ed036254d64035f7 (dirty) | 61s |
 | M9 | `pnpm test test/fake-cli test/injection` | 0 | 50c0ffb6c4db4a4c0aeb8b31b82d4cf5c2fef551 | 603s |
+| M10M | `pnpm test:rule-removal --jobs 3` | 0 | 6bb51c3a954f675e994659ca2d86c8f46159d93f | 1422s |
