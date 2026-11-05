@@ -218,6 +218,8 @@ export class MockAdapter implements WorkerAdapter {
   }
 
   private async apply(req: DispatchRequest, edits: { path: string; content: string | null }[]) {
+    // A read-only step writes only when a behaviour means it to (reviewer_modifies_tree).
+    if (req.mode === 'read_only') return;
     for (const e of edits) await this.world.writeFile(req.cwd, e.path, e.content);
   }
 
@@ -393,8 +395,37 @@ export class MockAdapter implements WorkerAdapter {
         return ok(report());
       case 'reviewer_pass':
         return ok(block(reviewPass(acs, files)));
-      case 'reviewer_fail':
+      case 'reviewer_fail': {
+        if (args?.unverifiable) {
+          // One UNVERIFIABLE criterion citing one major finding, every semantic check PASS: the exact case.
+          const r: any = reviewPass(acs, files);
+          r.verdict = 'FAIL';
+          r.criteria[0].verdict = 'UNVERIFIABLE';
+          r.criteria[0].finding_refs = [0];
+          r.findings = [
+            {
+              criterion: acs[0],
+              category: 'spec',
+              finding_type: 'other',
+              subject: 'no way to verify it',
+              observed: 'no signal exists',
+              expected: 'a signal',
+              severity: 'major',
+              file: null,
+              line: null,
+              message: 'm',
+              required_repair: 'r',
+            },
+          ];
+          return ok(block(r));
+        }
+        if (args?.unverifiable_pass) {
+          const r: any = reviewPass(acs, files);
+          r.criteria[0].verdict = 'UNVERIFIABLE';
+          return ok(block(r));
+        }
         return ok(block(reviewFail(acs, files, args?.findings ?? [{}], files[0] ?? null)));
+      }
       case 'reviewer_pass_with_blocker': {
         const r: any = reviewPass(acs, files);
         r.findings = [

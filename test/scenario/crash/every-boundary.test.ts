@@ -336,10 +336,6 @@ function safetyProblems(sim: ReturnType<typeof makeSim>): string[] {
   return out;
 }
 
-async function drive(sim: ReturnType<typeof makeSim>, first: () => Promise<unknown>) {
-  await first();
-}
-
 describe.each(Object.keys(SCENARIOS))('crash at every ledger event: %s', (name) => {
   it('reaches the same end as the uninterrupted run', async () => {
     const baseline = makeSim(SCENARIOS[name]);
@@ -359,7 +355,7 @@ describe.each(Object.keys(SCENARIOS))('crash at every ledger event: %s', (name) 
       };
       let crashedAt = '';
       try {
-        await drive(sim, () => runSim(sim));
+        await runSim(sim);
       } catch (err) {
         if (!(err instanceof SimulatedKill)) throw err;
         crashedAt = err.message;
