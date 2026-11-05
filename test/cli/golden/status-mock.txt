@@ -1,0 +1,12 @@
+RUN run1
+STATE MOCK_RUN_COMPLETE
+RISK low  DEPTH STANDARD
+ELAPSED 00:00  LAST_EVENT 00:00 ago shadow.outcome_resolved
+TASK T1 TASK_PASSED attempt=1 repair=0 rung=mock-openai
+TASK T2 TASK_PASSED attempt=1 repair=0 rung=mock-openai
+TASK T3 TASK_PASSED attempt=1 repair=0 rung=mock-openai
+BLOCKERS none
+SHADOW agreement=8/8 unavailable=0 skipped=0
+USAGE tokens=unavailable cost=unavailable measured=0/8 invocations=8
+RESULT ecp/run1/integration
+REPORT runs/run1/RUN_REPORT.md

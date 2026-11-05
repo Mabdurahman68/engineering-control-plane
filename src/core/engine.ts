@@ -657,6 +657,15 @@ export class Engine {
     }
   }
 
+  // ecp publish, for a blocked or ready run: re-enters the whole gate.
+  retryPublish(acceptBase: string | null) {
+    if (this.s.state !== 'PUSH_BLOCKED' && this.s.state !== 'READY_FOR_HUMAN_MERGE') {
+      throw new DecisionRefused(`nothing to publish in ${this.s.state}`);
+    }
+    if (acceptBase) this.append('publish.base_accepted', null, { sha: acceptBase });
+    if (this.s.state === 'PUSH_BLOCKED') this.runTo('PUSHING', 'publish_retry');
+  }
+
   async loop(): Promise<RunExit> {
     try {
       for (;;) {

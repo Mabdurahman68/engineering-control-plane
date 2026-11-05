@@ -4,6 +4,7 @@
       "**",
       "!ARCHITECTURE.md",
       "!docs",
+      "!test/cli/golden",
       "!policy",
       "!.github",
       "!README.md",

@@ -107,4 +107,4 @@ export const mockScriptSchema = z.strictObject({
     )
     .optional(),
 });
-export type MockScript = z.infer<typeof mockScriptSchema>;
+export type MockScript = z.infer<typeof mockScriptSchema> & { default_plan?: unknown };
