@@ -259,6 +259,19 @@ export function makeSim(
     adapters,
     policy,
     observer: o.observer ?? null,
+    scanner: {
+      scan: async (a) => {
+        const rec = adapter.processFor(a.attempt_id);
+        return rec ? [rec] : [];
+      },
+      isAlive: async (pid) => adapter.isAlivePid(pid),
+    },
+    killer: {
+      kill: async (pids, signal) => {
+        for (const pid of pids) adapter.signalPid(pid, signal);
+      },
+      sleep: async () => {},
+    },
     failpoint: (n) => sim.failFn(n),
     notify: (kind, summary) => sim.notifications.push({ kind, summary }),
     control: {

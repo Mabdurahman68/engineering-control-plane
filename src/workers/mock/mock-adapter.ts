@@ -596,6 +596,36 @@ export class MockAdapter implements WorkerAdapter {
     return { attempt_id: req.attempt_id, pid, start_time: run.start_time };
   }
 
+  // The fake process table, so a scan in tests sees what a real one would.
+  processFor(attemptId: string) {
+    const run = this.runs.get(attemptId);
+    if (!run || run.settled) return null;
+    return {
+      pid: run.pid,
+      start_time: run.start_time,
+      argv: `relay --out-dir ${run.req.out_dir}`,
+      cwd: run.req.cwd,
+    };
+  }
+  isAlivePid(pid: number) {
+    return [...this.runs.values()].some((r) => r.pid === pid && !r.settled);
+  }
+  signalPid(pid: number, signal: string) {
+    for (const run of this.runs.values()) {
+      if (run.pid !== pid || run.settled) continue;
+      run.signals.push(signal);
+      if (signal === 'SIGTERM' && run.ignoresTerm) continue;
+      run.resolveNow(
+        outcome({ relay_status: null, exit_code: null, signal, result_present: false }),
+      );
+    }
+  }
+
+  // For tests: fake relays that haven't finished.
+  liveRuns(): string[] {
+    return [...this.runs.values()].filter((r) => !r.settled).map((r) => r.attempt_id);
+  }
+
   wait(h: RunHandle): Promise<RawOutcome> {
     const run = this.runs.get(h.attempt_id) ?? this.world.survivors?.get(h.attempt_id);
     if (!run)

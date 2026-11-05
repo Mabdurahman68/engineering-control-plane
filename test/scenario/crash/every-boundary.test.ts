@@ -300,7 +300,15 @@ function signature(sim: ReturnType<typeof makeSim>) {
     ),
     integrated_repairs: s.integrated_repairs,
     // Multiplicity and scope count, and so do who ruled and how.
-    waivers: s.waivers.map((w: any) => `${w.scope}|${JSON.stringify(w.resolves)}`).sort(),
+    waivers: s.waivers
+      .map((w: any) => {
+        const authority = w.disagreement_id ? s.disagreements[w.disagreement_id] : null;
+        const who = authority
+          ? `${authority.kind}:${authority.adjudication.adjudicator}`
+          : w.disagreement_id;
+        return `${w.scope}|${JSON.stringify(w.resolves)}|${who}|${w.tree_at_ruling}`;
+      })
+      .sort(),
     disagreements: Object.values<any>(s.disagreements)
       .map(
         (d) =>
@@ -320,6 +328,8 @@ function safetyProblems(sim: ReturnType<typeof makeSim>): string[] {
   const out: string[] = [];
   for (const a of Object.values(sim.engine.s.attempts)) {
     if (a.finished && !a.swept && !a.fenced) out.push(`${a.attempt_id} finished but never swept`);
+    if (a.finished && sim.adapter.liveRuns().includes(a.attempt_id))
+      out.push(`${a.attempt_id} finished, with its process alive`);
     if (a.class !== null && a.mode === 'write' && !a.retained && !a.released)
       out.push(`${a.attempt_id} holds a stale reservation`);
   }

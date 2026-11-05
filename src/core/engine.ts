@@ -536,6 +536,14 @@ export class Engine {
     nextRung: string | null,
     keepDiff = false,
   ) {
+    // Before the applied marker: a crash can repeat this alert, and can't lose it.
+    if (plan.flag_owner) {
+      const ok = this.safeNotify('AUTH', `${a.rung}: authentication failed`);
+      this.append(ok ? 'notification.sent' : 'notification.failed', a.task_id, {
+        kind: 'AUTH',
+        rung: a.rung,
+      });
+    }
     const backoff =
       plan.backoff_until !== null ? { until: plan.backoff_until, tries: plan.backoff_tries } : null;
     const quarantine =
@@ -563,13 +571,6 @@ export class Engine {
     // Evidence only, after the state change. Applied again on replay, the values are the same.
     if (backoff) this.append('backoff.started', a.task_id, { rung: a.rung, ...backoff });
     if (quarantine) this.append('worker.quarantined', a.task_id, { rung: a.rung, ...quarantine });
-    if (plan.flag_owner) {
-      const ok = this.safeNotify('AUTH', `${a.rung}: authentication failed`);
-      this.append(ok ? 'notification.sent' : 'notification.failed', a.task_id, {
-        kind: 'AUTH',
-        rung: a.rung,
-      });
-    }
   }
 
   anyInflight(): boolean {

@@ -469,6 +469,72 @@ describe('crash boundaries found at MIDPOINT re-review', () => {
   });
 });
 
+describe('crash boundaries found at MIDPOINT re-review 4', () => {
+  it('a split that ends on a PASS still reaches the owner if the crash fell after it', async () => {
+    const script: any[] = [
+      {
+        match: { task: 'T1', step: 'work' },
+        behaviour: 'ok',
+        edits: [{ path: 'src/t1/a.txt', content: 'a\n' }],
+      },
+      {
+        match: { task: 'T1', step: 'review', rung: 'mock-anthropic' },
+        behaviour: 'reviewer_fail',
+        times: 1,
+      },
+      { match: { task: 'T1', step: 'review', rung: 'mock-anthropic' }, behaviour: 'quota' },
+      { match: { task: 'T1', step: 'repair' }, behaviour: 'no_change' },
+      { match: { task: 'T1', step: 'review', rung: 'mock-glm' }, behaviour: 'reviewer_pass' },
+    ];
+    const over = {
+      script,
+      spec: { declared_risk: 'critical', requested_depth: 'EXHAUSTIVE' },
+    } as any;
+    const plain = makeSim(over);
+    expect((await runSim(plain)).state).toBe('ESCALATION_REQUIRED');
+    const sim = makeSim(over);
+    let armed = true;
+    sim.failFn = (n) => {
+      const reviews = sim.engine.s.tasks.T1?.reviews ?? [];
+      if (
+        armed &&
+        n === 'after:dispatch.classified' &&
+        reviews.at(-1)?.effective === 'PASS' &&
+        reviews.length >= 2
+      ) {
+        armed = false;
+        throw new SimulatedKill(n);
+      }
+    };
+    sim.engine.createRun();
+    await expect(sim.engine.loop()).rejects.toBeInstanceOf(SimulatedKill);
+    sim.failFn = () => {};
+    const exit = await resumeSim(sim);
+    expect(exit.state).toBe('ESCALATION_REQUIRED');
+    expect(
+      Object.values<any>(sim.engine.s.disagreements).some((d) => d.kind === 'REVIEWER_REVIEWER'),
+    ).toBe(true);
+  });
+  it('an AUTH alert can repeat across a crash, and is never lost', async () => {
+    const script: any[] = [{ match: { task: 'T1', step: 'work' }, behaviour: 'auth', times: 1 }];
+    const plain = makeSim({ script });
+    await runSim(plain);
+    expect(plain.notifications.filter((n) => n.kind === 'AUTH').length).toBe(1);
+    for (const point of [
+      'after:notification.sent',
+      'after:fallback.taken',
+      'after:worker.quarantined',
+    ]) {
+      const { sim } = await crashAfter(point, script);
+      await resumeSim(sim);
+      expect(
+        sim.notifications.filter((n) => n.kind === 'AUTH').length,
+        point,
+      ).toBeGreaterThanOrEqual(1);
+    }
+  });
+});
+
 describe('crash boundaries found at MIDPOINT re-review 3', () => {
   it('a task-level split replayed after a crash still reaches the owner', async () => {
     const script: any[] = [
