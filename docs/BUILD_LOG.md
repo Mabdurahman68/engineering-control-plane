@@ -22,3 +22,30 @@ Deferred from M7 to M9, per the plan's section B: `test/injection/launch-window`
 | M10 | `pnpm test test/eval` | 0 | 79c311aa7a700b56b7a24959ed036254d64035f7 (dirty) | 61s |
 | M9 | `pnpm test test/fake-cli test/injection` | 0 | 50c0ffb6c4db4a4c0aeb8b31b82d4cf5c2fef551 | 603s |
 | M10M | `pnpm test:rule-removal --jobs 3` | 0 | 6bb51c3a954f675e994659ca2d86c8f46159d93f | 1422s |
+
+## PRE-SHIP runs
+
+Copied by hand from the run logs in the build session's review folder: `scripts/build-log.ts` didn't run these. Full checks used `ECP_FUZZ_RUNS=10000 ECP_FUZZ_REAL_RUNS=200`. "Network-denied" means `env -i`, an empty HOME and `sandbox-exec` denying IP, with `ps` alone through a helper outside the sandbox.
+
+| Review | Commit | Run | Result |
+| ------ | ------ | --- | -----: |
+| PRE-SHIP | aa60ab4 | full check | 1,520 pass |
+| PRE-SHIP | aa60ab4 | rule removal | 32 of 32 |
+| — | 77de177 | full check | 2 failed, timeouts (log lost) |
+| — | 419326e | full check | stopped: the commit's edit was incomplete |
+| re-review 1 | 57efc29 | full check | 1,574 pass |
+| re-review 1 | 57efc29 | rule removal | 33 of 33 |
+| re-review 2 | 5a8077c | full check | 1,590 pass |
+| re-review 2 | 5a8077c | rule removal | 33 of 33 |
+| re-review 2 | 5a8077c | full check, no credentials, network guard in Node | 1,590 pass |
+| re-review 2 | 5a8077c | full check, sandboxed, `ps` blocked | 31 failed (setuid `ps` refused), 1,559 pass |
+| re-review 3 | 6ae6f12 | full check | 1,606 pass |
+| re-review 3 | 6ae6f12 | rule removal | 33 of 33 |
+| re-review 3 | 6ae6f12 | full check, network-denied | 1,606 pass |
+| re-review 4 | f7d5c94 | full check | 1,688 pass |
+| re-review 4 | f7d5c94 | rule removal | 33 of 33 |
+| re-review 4 | f7d5c94 | full check, network-denied | 1,688 pass |
+| re-review 5 | f98083b | full check, network-denied (one run serves both) | 1,698 pass |
+| re-review 5 | f98083b | rule removal | 33 of 33 |
+| re-review 6 | 914ca95 | full check, network-denied (one run serves both) | 1,710 pass |
+| re-review 6 | 914ca95 | rule removal | 34 of 34 |

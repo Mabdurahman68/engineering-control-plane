@@ -115,9 +115,37 @@ A symlink from elsewhere into the fixture directory is refused too, even though 
 
 ## The coordinator lock
 
-A directory of numbered claims. The owner is the highest claim whose process is alive. A takeover claims the next number with a link, which either creates it or fails, and a claimant that then isn't highest gives up. Nobody removes or replaces a claim that could be someone's, so no age check is involved. The argument is in `src/cli/lock.ts`.
+**A deviation from STATE_MACHINE §7.4 step 1,** which detects a stale lock by PID and start time. Six review rounds showed that no reading of a process listing can be trusted to call an owner dead: a failed, empty, garbled or reformatted answer, or a wall-clock change on Linux, could each let a second coordinator take over a live run. So ownership is now a kernel advisory lock (BSD `flock` semantics), and nothing about another process is inspected.
 
-Liveness has three answers. Dead needs evidence: `kill(pid, 0)` giving `ESRCH`, or the PID now belonging to a later process. A process's identity is one a clock change can't move. On Linux, `lstart` is boot time plus ticks, and boot time shifts when the wall clock is set, so the identity is the boot ID and the start ticks from `/proc`. On macOS, it's the start time the kernel records once at process start, read with `ps` under a fixed time zone and locale, which has to parse as a real time. Elsewhere there's none, and only `ESRCH` shows an owner gone. Anything that can't be read, or doesn't compare, isn't evidence. Anything else is unknown, and an owner isn't unseated on unknown. So a machine where `ps` is broken refuses to start a run, rather than risk two.
+- **The lock.** `open(coordinator.lock, O_RDWR | O_CREAT | O_EXLOCK | O_NONBLOCK | O_NOFOLLOW)`, held on that descriptor for the coordinator's whole life. While the holder exists, running, stopped or asleep, another exclusive open fails with `EAGAIN`. When it's gone, the kernel frees it. There are no shared or probe locks: the only operation is an exclusive attempt. `O_EXLOCK` is Apple's `0x20`, since Node doesn't export it, and libuv adds `O_CLOEXEC`, so a launched child doesn't inherit it.
+- **macOS only** in this version. Anything else refuses every command that would take the lock.
+- **Preconditions.** Only ecp creates or opens `coordinator.lock`. Nobody deletes, renames or replaces it, and ecp never does either. It sits on a local APFS or HFS volume: `src/cli/fscheck.ts` finds the real mount with `df -P`, matches it exactly in `mount`, requires `apfs` or `hfs` and `local`, and cross-checks `statfs`. Anything it can't positively identify refuses.
+- **Ownership checks.** Before every ledger append, every torn-tail repair and every coordinator write under a run, `assertOwner` checks the descriptor's `dev` and `ino` against the path's. That detects replacement on a best-effort basis. It is detection, not fencing. On a detected loss, or an identity it can't check, it writes one line to stderr and exits 70 at once: no ledger write, event, report, notification or cleanup. The next resume reconciles as after a crash. A write after release throws.
+- **Readers.** `status`, `metrics` and `report` open the ledger read-only, ignore a torn tail in memory, and never truncate or create a directory.
+- **Metadata** (`pid`, `run_id`, `started_at`) is written once through the held descriptor, in a fixed 128 bytes at offset 0, for display only. That writer is the only place the lock module reads the clock.
+- **`clean`** takes the lock too, since it removes worktrees.
+
+## A new home, instead of a migration
+
+The default home is `~/.ecp/home-v2/` (`ECP_HOME` still overrides). It holds `layout` (`ecp-home v2`), `coordinator.lock` and `runs/`. Nothing at or before f98083b ever reads or writes it: those versions use `~/.ecp/run.lock` and `~/.ecp/runs/`. Nothing was migrated, since v0.1 has never run a real workload.
+
+Before anything is created: the platform, then the filesystem of the nearest existing ancestor, then what's already there. A home that exists but has no `layout`, or holds anything but leftover `layout.tmp-*` files, is refused, and so is one with another layout or an older version's `run.lock`. Then it's created with mode 0700, resolved and checked again, and refused if it resolved somewhere other than predicted. `layout` is published by `link()`, which fails if it already exists, so two first starts can't both write it. Then `runs/`, then the lock.
+
+**Operator precondition:** don't point an older ecp's `ECP_HOME` at a v2 home. Code can't enforce that against older code, so `ecp doctor` says it.
+
+Publishing lists now live under the v2 home (`<home>/policy/`). The build's own push gate still reads `~/.ecp/policy/`.
+
+## Operator requests, durable
+
+`pause` and `cancel` each write a new file, `runs/<run>/control/requests/<ms>-<pid>-<random>.json`, by tmp and rename, so no request is overwritten. Then they try the lock. If it's free, the command is the coordinator for the moment, and resumes the run with the lock already held. If it's held, it prints that the request is recorded and which run is active, and exits 0; it never reports a request as applied. Any other error exits 2.
+
+The coordinator consumes requests before any dispatch on every resume, and at least once a second while idle. For each request with no acknowledgement in the ledger, it appends one, then deletes the file. A crash between the two leaves the file, whose acknowledgement stops it acting twice. A cancel outranks any pause, whatever their order. A pause while paused, or anything once the run is stopping, is acknowledged as having no effect.
+
+The acknowledgement is the existing `operator.request_received` event, with `id` and `effective` added to its data, not a new `control.request` event type: the frozen event list stays as it is. Because every request is acknowledged, `test/scenario/control.test.ts` now expects one ineffective acknowledgement for a pause made while paused, where it used to expect none.
+
+## Documented gaps kept
+
+Worker liveness in `src/core/recovery.ts` and `src/workers/relay/proc.ts`, where a failed scan looks like an empty one, stays a v0.1 gap behind the real-worker hold (R7/R8). It never grants coordinator ownership.
 
 ## Evidence for a semantic claim
 
