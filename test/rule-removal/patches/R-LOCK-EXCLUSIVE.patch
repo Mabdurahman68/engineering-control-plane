@@ -1,0 +1,13 @@
+diff --git a/src/cli/lock.ts b/src/cli/lock.ts
+index c9df908..e7d1bed 100644
+--- a/src/cli/lock.ts
++++ b/src/cli/lock.ts
+@@ -19,7 +19,7 @@ import {
+ 
+ // Apple's value, from xnu bsd/sys/fcntl.h. Node doesn't export it.
+ export const O_EXLOCK = 0x20;
+-const FLAGS = C.O_RDWR | C.O_CREAT | O_EXLOCK | C.O_NONBLOCK | C.O_NOFOLLOW;
++const FLAGS = C.O_RDWR | C.O_CREAT | C.O_NONBLOCK | C.O_NOFOLLOW;
+ const META_BYTES = 128;
+ 
+ export type FsIdentity = {

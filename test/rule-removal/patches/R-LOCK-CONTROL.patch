@@ -1,0 +1,20 @@
+diff --git a/src/core/engine.ts b/src/core/engine.ts
+index 3654c4b..de612d8 100644
+--- a/src/core/engine.ts
++++ b/src/core/engine.ts
+@@ -863,12 +863,14 @@ export class Engine {
+       if (!this.s.control_acked.includes(r.id)) {
+         const effective =
+           !stopping && (r.request === 'cancel' || (!cancelling && !PAUSED.includes(this.s.state)));
++        this.p.ackControl(r.id);
++        this.p.failpoint('control.between');
+         this.append('operator.request_received', null, {
+           request: r.request,
+           id: r.id,
+           effective,
+         });
+-        this.p.failpoint('control.between');
++        continue;
+       }
+       this.p.ackControl(r.id);
+     }

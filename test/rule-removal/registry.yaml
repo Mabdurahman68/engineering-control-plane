@@ -716,18 +716,61 @@ rules:
         test_name: what the guard accepts accepts the pinned fixtures, and only on an absolute PATH
       - file: test/fake-cli/real-worker-guard.test.ts
         test_name: the real-worker chain holds the constant false in this build
-  - id: R-ONE-COORDINATOR
-    source: PRE-SHIP review, the coordinator lock
-    patch: test/rule-removal/patches/R-ONE-COORDINATOR.patch
-    removes: A process whose start time can't be read counts as dead, so a live owner can be unseated.
-    removed_predicate: "seen === null in liveness returning unknown"
+  - id: R-LOCK-EXCLUSIVE
+    source: lock design v3, rule removal (a)
+    patch: test/rule-removal/patches/R-LOCK-EXCLUSIVE.patch
+    removes: "The lock open asks for no exclusive lock, so every attempt succeeds."
+    removed_predicate: "O_EXLOCK in FLAGS"
     touches:
       - src/cli/lock.ts
     must_fail:
-      - file: test/unit/cli-lock.test.ts
-        test_name: "ps prints a partial line after the first acquisition returned: no second owner"
-      - file: test/unit/cli-lock.test.ts
-        test_name: "ps prints garbage after the first acquisition returned: no second owner"
+      - file: test/cli/lock-cli.test.ts
+        test_name: "run, resume, publish, pause and cancel get no second ownership"
+      - file: test/unit/coordinator-lock.test.ts
+        test_name: "exactly one owner, and one layout, however they interleave"
     must_pass:
-      - file: test/unit/cli-lock.test.ts
-        test_name: "a second taker fails while the first is alive"
+      - file: test/unit/coordinator-lock.test.ts
+        test_name: "imports no child_process"
+  - id: R-LOCK-OWNER
+    source: lock design v3, rule removal (b)
+    patch: test/rule-removal/patches/R-LOCK-OWNER.patch
+    removes: "assertOwner always passes: a replaced lock file or an unverifiable identity goes unnoticed."
+    removed_predicate: "the dev and ino comparison, and the exit on a failed check, in assertOwner"
+    touches:
+      - src/cli/lock.ts
+    must_fail:
+      - file: test/unit/coordinator-lock.test.ts
+        test_name: "the lock file replaced: the next check exits 70"
+      - file: test/unit/coordinator-lock.test.ts
+        test_name: "an identity that cannot be checked: the same"
+    must_pass:
+      - file: test/unit/coordinator-lock.test.ts
+        test_name: "after a release another process takes it, and a write after release throws"
+  - id: R-LOCK-HOME
+    source: lock design v3, rule removal (c)
+    patch: test/rule-removal/patches/R-LOCK-HOME.patch
+    removes: "Home validation always passes: a home made by another version, or by anything else, is used."
+    removed_predicate: "the checks of an existing home, its layout, and a legacy run.lock, in prepareHome"
+    touches:
+      - src/cli/home.ts
+    must_fail:
+      - file: test/unit/home.test.ts
+        test_name: "is refused, before anything is created"
+      - file: test/unit/home.test.ts
+        test_name: "a v2 home that later gained an older version’s run.lock is refused"
+    must_pass:
+      - file: test/unit/home.test.ts
+        test_name: "an empty directory becomes a v2 home"
+  - id: R-LOCK-CONTROL
+    source: lock design v3.1, rule removal (d)
+    patch: test/rule-removal/patches/R-LOCK-CONTROL.patch
+    removes: "A request's file is deleted before its acknowledgement is in the ledger."
+    removed_predicate: "the ledger acknowledgement before ackControl, in pollControl"
+    touches:
+      - src/core/engine.ts
+    must_fail:
+      - file: test/cli/lock-cli.test.ts
+        test_name: "after the ledger event, before the file goes: resume removes it without acting twice"
+    must_pass:
+      - file: test/cli/lock-cli.test.ts
+        test_name: "before the ledger event: resume applies the request, once"
