@@ -40,13 +40,26 @@ export class MemLedgerStore implements LedgerStore {
   }
 }
 
+export class LedgerReadOnly extends Error {}
+
+// A coordinator's store checks ownership before every mutation, append and repair alike. A reader's
+// store can't mutate at all, and creates nothing: no directory comes from opening one.
 export class FsLedgerStore implements LedgerStore {
   private readonly path: string;
-  constructor(path: string) {
+  private readonly guard: (() => void) | null;
+  private readonly readOnly: boolean;
+  constructor(path: string, o: { guard?: () => void; readOnly?: boolean } = {}) {
     this.path = path;
-    mkdirSync(dirname(path), { recursive: true });
+    this.guard = o.guard ?? null;
+    this.readOnly = o.readOnly ?? false;
+  }
+  private mutating() {
+    if (this.readOnly) throw new LedgerReadOnly(`${this.path} is open read-only`);
+    this.guard?.();
   }
   appendRaw(line: string) {
+    this.mutating();
+    mkdirSync(dirname(this.path), { recursive: true });
     const fd = openSync(this.path, 'a');
     try {
       writeSync(fd, line);
@@ -59,6 +72,7 @@ export class FsLedgerStore implements LedgerStore {
     return existsSync(this.path) ? readFileSync(this.path, 'utf8') : '';
   }
   truncateTo(bytes: number) {
+    this.mutating();
     const fd = openSync(this.path, 'r+');
     try {
       ftruncateSync(fd, bytes);
@@ -75,7 +89,8 @@ export class FsLedgerStore implements LedgerStore {
 export type LoadResult = { events: LedgerEvent[]; tornTail: boolean };
 
 // Reads and verifies the chain. Only a truncated final line is recoverable; any other break throws.
-export function loadLedger(store: LedgerStore): LoadResult {
+// The coordinator repairs a torn tail; a reader leaves the file alone and ignores the tail in memory.
+export function loadLedger(store: LedgerStore, o: { repair?: boolean } = {}): LoadResult {
   const raw = store.readRaw();
   if (raw === '') return { events: [], tornTail: false };
   const endsClean = raw.endsWith('\n');
@@ -92,7 +107,7 @@ export function loadLedger(store: LedgerStore): LoadResult {
     }
     if (parsesWhole) throw new LedgerCorrupt('final line complete JSON without a newline');
     tornTail = true;
-    store.truncateTo(Buffer.byteLength(raw) - Buffer.byteLength(tail));
+    if (o.repair !== false) store.truncateTo(Buffer.byteLength(raw) - Buffer.byteLength(tail));
   }
   const events: LedgerEvent[] = [];
   let prev = '';

@@ -11,10 +11,14 @@ import type { RunStore } from './port.ts';
 
 export class FsRunStore implements RunStore {
   readonly root: string;
-  constructor(root: string) {
+  private readonly guard: (() => void) | null;
+  constructor(root: string, guard: (() => void) | null = null) {
     this.root = root;
+    this.guard = guard;
   }
+  // A coordinator write under the run: ownership first.
   write(rel: string, content: string) {
+    this.guard?.();
     const p = join(this.root, rel);
     mkdirSync(dirname(p), { recursive: true });
     const tmp = `${p}.tmp-${process.pid}`;
