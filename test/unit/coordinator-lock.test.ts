@@ -219,7 +219,7 @@ describe('test 14: what the lock module may use', () => {
     expect(uses).toHaveLength(1);
     const at = text.indexOf('new Date(');
     expect(text.lastIndexOf('writeMeta(', at)).toBeGreaterThan(-1);
-    expect(text.slice(text.lastIndexOf('writeMeta(', at), at)).not.toMatch(/\n  [a-zA-Z]+\(/);
+    expect(text.slice(text.lastIndexOf('writeMeta(', at), at)).not.toMatch(/\n {2}[a-zA-Z]+\(/);
   });
   it('has none of the old liveness code', () => {
     for (const gone of [
