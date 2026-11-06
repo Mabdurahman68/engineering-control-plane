@@ -159,8 +159,16 @@ describe('test 7 and 8: ownership lost', () => {
     writeFileSync(lock, '');
     const before = snapshot(home);
     h.child.stdin?.write('append second\n');
-    const end = await h.exited;
-    assertNotForbidden(OWNER, end.code !== 70, `exited ${end.code} ${end.signal}`);
+    // Bounded: a holder that doesn't notice the loss never exits, and that is the forbidden outcome.
+    const end = await Promise.race([
+      h.exited,
+      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+    ]);
+    assertNotForbidden(
+      OWNER,
+      end === null || end.code !== 70,
+      `still running, or exited ${end?.code}`,
+    );
     expect(h.stderr()).toContain('coordinator lock file was replaced');
     assertNotForbidden(OWNER, snapshot(home) !== before, 'something changed after the loss');
   });
@@ -172,8 +180,16 @@ describe('test 7 and 8: ownership lost', () => {
     expect((await h.ask('fail-fs')).failing).toBe(true);
     const before = snapshot(home);
     h.child.stdin?.write('append second\n');
-    const end = await h.exited;
-    assertNotForbidden(OWNER, end.code !== 70, `exited ${end.code} ${end.signal}`);
+    // Bounded: a holder that doesn't notice the loss never exits, and that is the forbidden outcome.
+    const end = await Promise.race([
+      h.exited,
+      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+    ]);
+    assertNotForbidden(
+      OWNER,
+      end === null || end.code !== 70,
+      `still running, or exited ${end?.code}`,
+    );
     expect(h.stderr()).toContain('identity could not be verified');
     assertNotForbidden(OWNER, snapshot(home) !== before, 'something changed after the loss');
   });
