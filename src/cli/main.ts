@@ -21,6 +21,7 @@ import {
   readRun,
   repoRoot,
   runDir,
+  pendingControlRequests,
   wire,
   writeControlRequest,
 } from './wire.ts';
@@ -103,7 +104,7 @@ function loadRunConfig(runId: string) {
 
 async function runResume(
   runId: string,
-  opts: { decisionFile?: string; accept?: boolean; extend?: number },
+  opts: { decisionFile?: string; accept?: boolean; extend?: number; controlOnly?: boolean },
   held?: CoordinatorLock,
 ) {
   const { spec, cfg } = loadRunConfig(runId);
@@ -132,6 +133,7 @@ async function runResume(
   }
   w.engine.loadForResume();
   await w.engine.resumeRun({
+    controlOnly: opts.controlOnly,
     acceptPolicy: opts.accept,
     extendBudget: opts.extend,
     decision,
@@ -172,25 +174,42 @@ async function cmdControl(request: 'pause' | 'cancel', args: string[]) {
   const home = openHome();
   if (!existsSync(runDir(runId))) fail(`no such run: ${runId}`);
   // Durable first: whatever happens next, the request is on disk, and every resume reads it.
-  writeControlRequest(runId, request);
-  const r = acquireLock(lockPathIn(home));
-  if (r.ok) {
-    // No coordinator: this process is it, for the moment, and applies the request itself.
-    r.lock.writeMeta(runId);
-    await runResume(runId, {}, r.lock);
-    return;
+  const id = writeControlRequest(runId, request);
+  const lockPath = lockPathIn(home);
+  // A coordinator that is busy or about to stop may not see it at once. Wait a little, either for it to
+  // take the request up, or for the lock to come free so this command can apply it itself.
+  const waitMs = Number(process.env.ECP_CONTROL_WAIT_MS ?? 5000);
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const r = acquireLock(lockPath);
+    if (r.ok) {
+      // No coordinator: this process is it, for the moment, and applies the requests itself.
+      r.lock.writeMeta(runId);
+      await runResume(runId, { controlOnly: true }, r.lock);
+      return;
+    }
+    if (!r.held) {
+      process.stdout.write(
+        `${request} recorded for ${runId}; the lock could not be attempted: ${r.error}\n`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    const active = readLockMeta(lockPath)?.run_id ?? 'unknown';
+    if (!pendingControlRequests(runId).some((x) => x.id === id)) {
+      process.stdout.write(
+        `${request} for ${runId} taken up by the active coordinator (run ${active})\n`,
+      );
+      return;
+    }
+    if (Date.now() >= until) {
+      process.stdout.write(
+        `${request} recorded for ${runId}; a coordinator is active (run ${active}). It applies when that coordinator next looks, if it is running ${runId}, otherwise when ${runId} next resumes.\n`,
+      );
+      return;
+    }
+    await new Promise((res) => setTimeout(res, 200));
   }
-  if (r.held) {
-    const active = readLockMeta(lockPathIn(home))?.run_id ?? 'unknown';
-    process.stdout.write(
-      `${request} recorded for ${runId}; a coordinator is active (run ${active}). It applies at once if that is ${runId}, otherwise when ${runId} next resumes.\n`,
-    );
-    return;
-  }
-  process.stdout.write(
-    `${request} recorded for ${runId}; the lock could not be attempted: ${r.error}\n`,
-  );
-  process.exitCode = 2;
 }
 
 function cmdStatus(args: string[]) {

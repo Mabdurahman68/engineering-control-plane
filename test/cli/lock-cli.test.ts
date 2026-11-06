@@ -62,7 +62,7 @@ describe('test 1: a live holder keeps every command out', () => {
       );
     }
     for (const request of ['pause', 'cancel']) {
-      const r = c.run([request, 'r0']);
+      const r = c.run([request, 'r0'], { ECP_CONTROL_WAIT_MS: '500' });
       expect(r.status).toBe(0);
       expect(r.stdout).toContain(`${request} recorded for r0; a coordinator is active (run held)`);
       assertNotForbidden(
@@ -116,7 +116,7 @@ describe('test 10: pause and cancel', () => {
     const running = c.runAsync(c.startArgs('r1'));
     expect(await working(c.home, 'r1')).toBe(true);
     const r = c.run(['cancel', 'r1']);
-    expect(r.stdout).toContain('cancel recorded for r1; a coordinator is active (run r1)');
+    expect(r.stdout).toContain('cancel for r1 taken up by the active coordinator (run r1)');
     expect((await running).stdout.trim()).toBe('r1 CANCELLED');
     expect(acks(c.home, 'r1')).toHaveLength(1);
   }, 120_000);
@@ -126,7 +126,7 @@ describe('test 10: pause and cancel', () => {
     const r1 = c.runAsync(c.startArgs('r1'));
     expect(await working(c.home, 'r1')).toBe(true);
     const before = ledgerBytes(c.home, 'r2');
-    const r = c.run(['cancel', 'r2']);
+    const r = c.run(['cancel', 'r2'], { ECP_CONTROL_WAIT_MS: '500' });
     expect(r.stdout).toContain('cancel recorded for r2; a coordinator is active (run r1)');
     expect(ledgerBytes(c.home, 'r2')).toBe(before);
     expect((await r1).stdout.trim()).toBe('r1 MOCK_RUN_COMPLETE');
@@ -137,16 +137,42 @@ describe('test 10: pause and cancel', () => {
   it('two cancels at once: one applies, the other is recorded, and both are acknowledged', async () => {
     const c = cliEnv();
     await c.runAsync(c.startArgs('r1'), { ECP_FAILPOINT: 'after:plan.intent' });
-    const [a, b] = await Promise.all([c.runAsync(['cancel', 'r1']), c.runAsync(['cancel', 'r1'])]);
-    // The one that applies exits with the run's own code for CANCELLED; the one that records, 0.
-    for (const r of [a, b]) expect(r.stdout).toMatch(/r1 CANCELLED|cancel recorded for r1/);
-    expect([a, b].some((r) => r.stdout.trim() === 'r1 CANCELLED')).toBe(true);
-    for (const r of [a, b]) if (r.stdout.includes('recorded')) expect(r.status).toBe(0);
+    // The first takes the lock and is held before it reads any request: the second can only record.
+    const release = join(c.home, 'release-first');
+    const first = c.runAsync(['cancel', 'r1'], {
+      ECP_FAILPOINT_HOLD: 'after:run.resumed',
+      ECP_FAILPOINT_RELEASE: release,
+    });
+    expect(
+      await until(() => ledgerEvents(c.home, 'r1').some((e) => e.type === 'run.resumed'), 30_000),
+    ).toBe(true);
+    const second = c.run(['cancel', 'r1'], { ECP_CONTROL_WAIT_MS: '500' });
+    expect(second.status).toBe(0);
+    expect(second.stdout).toContain('cancel recorded for r1; a coordinator is active (run r1)');
+    writeFileSync(release, '');
+    expect((await first).stdout.trim()).toBe('r1 CANCELLED');
     const evs = ledgerEvents(c.home, 'r1');
     expect(new Set(acks(c.home, 'r1').map((e) => e.data.id)).size).toBe(2);
     expect(
       evs.filter((e) => e.type === 'run.state_changed' && e.data.to === 'CANCELLED'),
     ).toHaveLength(1);
+    expect(requests(c.home, 'r1')).toEqual([]);
+  }, 120_000);
+  it('pause on a run the operator paused leaves it paused, and dispatches nothing', async () => {
+    const c = cliEnv({ script: slow() });
+    const running = c.runAsync(c.startArgs('r1'));
+    expect(await working(c.home, 'r1')).toBe(true);
+    c.run(['pause', 'r1']);
+    expect((await running).stdout.trim()).toBe('r1 PAUSED_OPERATOR');
+    const intents = () =>
+      ledgerEvents(c.home, 'r1').filter((e) =>
+        ['dispatch.intent', 'plan.intent', 'review.intent'].includes(e.type),
+      ).length;
+    const before = intents();
+    const again = c.run(['pause', 'r1']);
+    expect(again.stdout.trim()).toBe('r1 PAUSED_OPERATOR');
+    expect(intents()).toBe(before);
+    expect(acks(c.home, 'r1').at(-1)?.data.effective).toBe(false);
   }, 120_000);
   it('a lock that cannot be attempted: recorded, and exit 2', async () => {
     const c = cliEnv();
@@ -168,24 +194,35 @@ describe('test 10: pause and cancel', () => {
 });
 
 describe('test 18: pause and cancel together', () => {
-  it('against a live coordinator: both kept, cancel wins, both acknowledged', async () => {
+  it('against a live coordinator, with the cancel arriving after the pause is acknowledged: cancel wins', async () => {
     const c = cliEnv({ script: slow() });
-    const running = c.runAsync(c.startArgs('r1'));
+    const release = join(c.home, 'release-coordinator');
+    // The coordinator acknowledges the pause, then is held there, before its file goes and before the
+    // pause takes effect. The cancel arrives in that gap.
+    const running = c.runAsync(c.startArgs('r1'), {
+      ECP_FAILPOINT_HOLD: 'after:operator.request_received',
+      ECP_FAILPOINT_RELEASE: release,
+    });
     expect(await working(c.home, 'r1')).toBe(true);
-    const [p, x] = await Promise.all([c.runAsync(['pause', 'r1']), c.runAsync(['cancel', 'r1'])]);
-    expect(p.stdout).toContain('recorded');
-    expect(x.stdout).toContain('recorded');
-    expect((await running).stdout.trim()).toBe('r1 CANCELLED');
-    const a = acks(c.home, 'r1');
-    expect(a.map((e) => e.data.request).sort()).toEqual(['cancel', 'pause']);
+    const p = c.run(['pause', 'r1'], { ECP_CONTROL_WAIT_MS: '1500' });
+    expect(p.stdout).toContain('pause recorded for r1');
+    expect(acks(c.home, 'r1').map((e) => e.data.request)).toEqual(['pause']);
+    const x = c.run(['cancel', 'r1'], { ECP_CONTROL_WAIT_MS: '500' });
+    expect(x.stdout).toContain('cancel recorded for r1');
+    writeFileSync(release, '');
+    const end = await running;
+    assertNotForbidden(
+      CONTROL,
+      end.stdout.trim() !== 'r1 CANCELLED',
+      `ended ${end.stdout.trim()}, cancel left`,
+    );
+    expect(acks(c.home, 'r1').map((e) => e.data.request)).toEqual(['pause', 'cancel']);
     expect(requests(c.home, 'r1')).toEqual([]);
   }, 120_000);
-  it('against no coordinator: both kept, the run ends cancelled, both acknowledged', async () => {
+  it('against no coordinator: both kept, the run ends cancelled, both acknowledged, with no extra resume', async () => {
     const c = cliEnv();
     await c.runAsync(c.startArgs('r1'), { ECP_FAILPOINT: 'after:plan.intent' });
     await Promise.all([c.runAsync(['pause', 'r1']), c.runAsync(['cancel', 'r1'])]);
-    const left = requests(c.home, 'r1');
-    if (left.length) c.run(['resume', 'r1']);
     const evs = ledgerEvents(c.home, 'r1');
     expect(
       acks(c.home, 'r1')

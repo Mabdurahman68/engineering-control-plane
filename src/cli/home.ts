@@ -42,6 +42,8 @@ export type HomeOptions = {
   home?: string;
   platform?: string;
   fscheck?: (path: string) => FsCheck;
+  // For a test to force an interleaving with another start: called with the tmp file, just before link.
+  beforeLink?: (tmp: string) => void;
 };
 
 // Before anything is created: the platform, the filesystem of the nearest existing ancestor, and what's
@@ -94,6 +96,7 @@ export function prepareHome(o: HomeOptions = {}): string {
     } finally {
       closeSync(fd);
     }
+    o.beforeLink?.(tmp);
     try {
       linkSync(tmp, join(real, 'layout'));
     } catch (err) {

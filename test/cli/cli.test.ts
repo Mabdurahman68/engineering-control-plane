@@ -150,7 +150,7 @@ describe('ecp, as a process', () => {
       await new Promise((r) => setTimeout(r, 100));
     }
     const p = c.run(['pause', 'r1']);
-    expect(p.stdout).toContain('pause recorded for r1; a coordinator is active (run r1)');
+    expect(p.stdout).toContain('pause for r1 taken up by the active coordinator (run r1)');
     const end = await running;
     expect(end.stdout.trim()).toBe('r1 PAUSED_OPERATOR');
     expect(c.run(['status', 'r1']).stdout).toContain('BLOCKERS operator paused');

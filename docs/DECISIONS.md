@@ -124,6 +124,8 @@ A symlink from elsewhere into the fixture directory is refused too, even though 
 - **Readers.** `status`, `metrics` and `report` open the ledger read-only, ignore a torn tail in memory, and never truncate or create a directory.
 - **Metadata** (`pid`, `run_id`, `started_at`) is written once through the held descriptor, in a fixed 128 bytes at offset 0, for display only. That writer is the only place the lock module reads the clock.
 - **`clean`** takes the lock too, since it removes worktrees.
+- **What the guard covers:** the ledger, every run-store write, deleting an acknowledged request, the relay's attempt directory and log files, and the notifications file. Worktrees under the home are written by git, outside `runs/`, and aren't behind it.
+- **For tests only,** `ECP_FAILPOINT_HOLD` and `ECP_FAILPOINT_RELEASE` hold a coordinator alive at a named point until a file appears, so an interleaving can be forced. The home check takes a `beforeLink` hook for the same reason. Neither is set in normal use.
 
 ## A new home, instead of a migration
 
@@ -137,9 +139,9 @@ Publishing lists now live under the v2 home (`<home>/policy/`). The build's own 
 
 ## Operator requests, durable
 
-`pause` and `cancel` each write a new file, `runs/<run>/control/requests/<ms>-<pid>-<random>.json`, by tmp and rename, so no request is overwritten. Then they try the lock. If it's free, the command is the coordinator for the moment, and resumes the run with the lock already held. If it's held, it prints that the request is recorded and which run is active, and exits 0; it never reports a request as applied. Any other error exits 2.
+`pause` and `cancel` each write a new file, `runs/<run>/control/requests/<ms>-<pid>-<random>.json`, by tmp and rename, so no request is overwritten. Then they try the lock. If it's free, the command is the coordinator for the moment, and applies the requests with the lock already held, and nothing else: a paused run stays paused unless a cancel moves it. If it's held, the command waits up to five seconds (`ECP_CONTROL_WAIT_MS`) for the coordinator to take the request up, or for the lock to come free so it can apply the request itself. Failing both, it prints that the request is recorded and which run is active, and exits 0. It never reports a request as applied unless it was. Any other error exits 2.
 
-The coordinator consumes requests before any dispatch on every resume, and at least once a second while idle. For each request with no acknowledgement in the ledger, it appends one, then deletes the file. A crash between the two leaves the file, whose acknowledgement stops it acting twice. A cancel outranks any pause, whatever their order. A pause while paused, or anything once the run is stopping, is acknowledged as having no effect.
+The coordinator consumes requests before any dispatch on every resume, at least once a second while idle, and once more as it stops, so a cancel that arrives while a pause completes is applied rather than left on disk. For each request with no acknowledgement in the ledger, it appends one, then deletes the file. A crash between the two leaves the file, whose acknowledgement stops it acting twice. A cancel outranks any pause, whatever their order. A pause while paused, or anything once the run is stopping, is acknowledged as having no effect.
 
 The acknowledgement is the existing `operator.request_received` event, with `id` and `effective` added to its data, not a new `control.request` event type: the frozen event list stays as it is. Because every request is acknowledged, `test/scenario/control.test.ts` now expects one ineffective acknowledgement for a pause made while paused, where it used to expect none.
 

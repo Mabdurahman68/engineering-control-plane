@@ -235,3 +235,78 @@ describe('test 14: what the lock module may use', () => {
     }
   });
 });
+
+describe('test 7, with the replacement between one append’s check and its write', () => {
+  it('that append completes; the next check exits 70, and nothing changes after', async () => {
+    const home = freshHome();
+    const h = await start(home);
+    expect((await h.ask('acquire')).ok).toBe(true);
+    const go = join(tempDir('ecp-go-'), 'go');
+    h.child.stdin?.write(`append-held ${go}\n`);
+    // Wait for the check to pass, then replace the lock before the write goes ahead.
+    const { until } = await import('../support/fake-cli.ts');
+    const p = join(home, 'runs/held/ledger/events.jsonl');
+    expect(await until(() => existsSync(join(home, 'coordinator.lock')), 5000)).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+    const lock = join(home, 'coordinator.lock');
+    renameSync(lock, `${lock}.moved`);
+    writeFileSync(lock, '');
+    writeFileSync(go, '');
+    expect(
+      await until(() => existsSync(p) && readFileSync(p, 'utf8').includes('in flight'), 10_000),
+    ).toBe(true);
+    const before = snapshot(home);
+    h.child.stdin?.write('append after\n');
+    const end = await Promise.race([
+      h.exited,
+      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+    ]);
+    assertNotForbidden(
+      OWNER,
+      end === null || end.code !== 70,
+      `still running, or exited ${end?.code}`,
+    );
+    assertNotForbidden(OWNER, snapshot(home) !== before, 'something changed after the loss');
+  });
+});
+
+describe('metadata', () => {
+  it('a long or awkward run ID still makes a record that parses, within 128 bytes', async () => {
+    const { readLockMeta } = await import('../../src/cli/lock.ts');
+    for (const id of ['r'.repeat(200), 'é'.repeat(80), '"\\'.repeat(60), 'x'.repeat(64)]) {
+      const home = freshHome();
+      const r = tryHere(home);
+      expect(r.ok).toBe(true);
+      if (!r.ok) continue;
+      r.lock.writeMeta(id);
+      const m = readLockMeta(lockPathIn(home));
+      expect(m?.pid).toBe(process.pid);
+      expect(id.startsWith(m?.run_id ?? 'none')).toBe(true);
+      expect(statSync(lockPathIn(home)).size).toBe(128);
+      r.lock.release();
+    }
+  });
+});
+
+describe('test 9, a repair without ownership', () => {
+  it('is refused, and leaves the torn tail alone', async () => {
+    const { FsLedgerStore, loadLedger, LedgerReadOnly } = await import(
+      '../../src/ledger/ledger.ts'
+    );
+    const home = freshHome();
+    const r = tryHere(home);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const p = join(home, 'runs/x/ledger/events.jsonl');
+    const owned = new FsLedgerStore(p, { guard: () => r.lock.assertOwner() });
+    owned.appendRaw('');
+    writeFileSync(p, '{"torn');
+    r.lock.release();
+    // Released: the guard throws before anything is truncated.
+    expect(() => loadLedger(new FsLedgerStore(p, { guard: () => r.lock.assertOwner() }))).toThrow(
+      /released/,
+    );
+    expect(() => loadLedger(new FsLedgerStore(p, { readOnly: true }))).toThrow(LedgerReadOnly);
+    expect(readFileSync(p, 'utf8')).toBe('{"torn');
+  });
+});

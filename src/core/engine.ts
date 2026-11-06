@@ -634,6 +634,9 @@ export class Engine {
   }
 
   async resumeRun(opts: {
+    // From pause or cancel with no coordinator running: apply the requests, and nothing else. A paused
+    // run stays paused unless a cancel needs it to move.
+    controlOnly?: boolean;
     acceptPolicy?: boolean;
     extendBudget?: number;
     decision?: Record<string, unknown>;
@@ -669,6 +672,9 @@ export class Engine {
     if (opts.decision) this.applyDecision(opts.decision);
     // Requests made while nothing ran are read before anything is dispatched.
     this.pollControl();
+    if (opts.controlOnly && PAUSED.includes(this.s.state) && this.s.pending_request !== 'cancel') {
+      return;
+    }
     if (PAUSED.includes(this.s.state)) {
       const to = this.s.resume_to ?? 'EXECUTING';
       this.draining = null;
@@ -700,7 +706,13 @@ export class Engine {
           // The operator's request stopped a gate command. The next pass acts on the request.
           if (!(err instanceof GateStopped)) throw err;
         }
-        if (RUN_STOPPING.includes(this.s.state) && !this.shouldContinueAfterStop()) break;
+        if (RUN_STOPPING.includes(this.s.state) && !this.shouldContinueAfterStop()) {
+          // One last look before stopping: a cancel that came in while a pause was completing is
+          // this coordinator's to apply, not something to leave on disk.
+          this.pollControl();
+          if (this.s.pending_request === 'cancel' && PAUSED.includes(this.s.state)) continue;
+          break;
+        }
         if (!progressed) await this.idle();
       }
     } catch (err) {

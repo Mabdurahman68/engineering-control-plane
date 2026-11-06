@@ -64,13 +64,16 @@ export class CoordinatorLock {
   // Display only, never an input to a decision: written once through the held descriptor, at offset 0,
   // in a fixed width, so nothing is truncated or replaced. This is the only place the clock is read.
   writeMeta(runId: string): void {
-    const rec = {
-      pid: process.pid,
-      run_id: runId.slice(0, 64),
-      started_at: new Date().toISOString(),
-    };
+    const started_at = new Date().toISOString();
+    // Shortened until the whole record fits, so it always parses, whatever the ID holds.
+    let id = runId;
+    let text = JSON.stringify({ pid: process.pid, run_id: id, started_at });
+    while (Buffer.byteLength(text) > META_BYTES - 1) {
+      id = id.slice(0, -1);
+      text = JSON.stringify({ pid: process.pid, run_id: id, started_at });
+    }
     const buf = Buffer.alloc(META_BYTES, ' ');
-    buf.write(JSON.stringify(rec), 0, META_BYTES - 1, 'utf8');
+    buf.write(text, 0, 'utf8');
     buf.write('\n', META_BYTES - 1);
     writeSync(this.fd, buf, 0, META_BYTES, 0);
   }

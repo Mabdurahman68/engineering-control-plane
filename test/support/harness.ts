@@ -145,6 +145,7 @@ export type Sim = {
   policy: PolicyBundle;
   spec: Spec;
   control: { request: 'pause' | 'cancel' } | null;
+  controls: { request: 'pause' | 'cancel'; id?: string }[];
   notifications: { kind: string; summary: string }[];
   engine: Engine;
   ports: EnginePorts;
@@ -161,7 +162,12 @@ export function makePorts(o: {
   ledger: LedgerStore;
   adapters: Record<string, WorkerAdapter>;
   policy: PolicyBundle;
-  control: { get(): { request: 'pause' | 'cancel' } | null; clear(): void };
+  control: {
+    get(): { request: 'pause' | 'cancel' } | null;
+    clear(): void;
+    queue?(): { request: 'pause' | 'cancel' }[];
+    drop?(id: string): void;
+  };
   notify: (k: string, s: string) => void;
   failpoint: (n: string) => void;
   observer?: DecisionObserver | null;
@@ -198,14 +204,16 @@ export function makePorts(o: {
     },
     failpoint: o.failpoint,
     // A test sets sim.control; it gets an ID the first time it's seen, and goes once acknowledged.
+    // A test sets sim.control, or queues several on sim.controls. Each gets an ID the first time it's
+    // seen, and goes once acknowledged.
     pendingControl: () => {
-      const c = o.control.get() as any;
-      if (!c) return [];
-      c.id ??= `C-${++controlSeq}`;
-      return [{ id: c.id, request: c.request }];
+      const all = [o.control.get(), ...(o.control.queue?.() ?? [])].filter(Boolean) as any[];
+      for (const c of all) c.id ??= `C-${++controlSeq}`;
+      return all.map((c) => ({ id: c.id, request: c.request }));
     },
     ackControl: (id: string) => {
       if ((o.control.get() as any)?.id === id) o.control.clear();
+      o.control.drop?.(id);
     },
     notify: o.notify,
     dayUsage: () => ({ invocations: 0, wall_clock_s: 0, usd: 0, shadow_invocations: 0 }),
@@ -256,6 +264,7 @@ export function makeSim(
     policy,
     spec,
     control: null,
+    controls: [],
     notifications: [],
     failFn: () => {},
   };
@@ -290,6 +299,10 @@ export function makeSim(
       get: () => sim.control,
       clear: () => {
         sim.control = null;
+      },
+      queue: () => sim.controls,
+      drop: (id: string) => {
+        sim.controls = sim.controls.filter((c: any) => c.id !== id);
       },
     },
   });
@@ -326,7 +339,12 @@ export async function runSim(sim: Sim): Promise<RunExit> {
 // A fresh engine on the same world, as after a crash or a stop. Returns the new engine's exit.
 export async function resumeSim(
   sim: Sim,
-  opts: { decision?: Record<string, unknown>; extendBudget?: number; acceptPolicy?: boolean } = {},
+  opts: {
+    decision?: Record<string, unknown>;
+    extendBudget?: number;
+    acceptPolicy?: boolean;
+    controlOnly?: boolean;
+  } = {},
 ): Promise<RunExit> {
   sim.engine = new Engine(
     {
@@ -383,6 +401,7 @@ export type RealSim = {
   engine: Engine;
   ports: EnginePorts;
   control: { request: 'pause' | 'cancel' } | null;
+  controls: { request: 'pause' | 'cancel'; id?: string }[];
   specSha: string;
 };
 
@@ -429,6 +448,7 @@ export function makeReal(
     policy,
     spec,
     control: null,
+    controls: [],
     specSha: sha256(canonical(spec)),
   };
   sim.ports = makePorts({
@@ -446,6 +466,10 @@ export function makeReal(
       get: () => sim.control,
       clear: () => {
         sim.control = null;
+      },
+      queue: () => sim.controls,
+      drop: (id: string) => {
+        sim.controls = sim.controls.filter((c: any) => c.id !== id);
       },
     },
   });

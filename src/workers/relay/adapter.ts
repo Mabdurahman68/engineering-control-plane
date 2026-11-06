@@ -172,7 +172,16 @@ export class DelegateRelayAdapter implements WorkerAdapter {
   private readonly repoRoot: string;
   private readonly policy: PolicyBundle;
   private readonly live = new Map<string, Live>();
-  constructor(o: { id: string; kind: CliKind; repoRoot: string; policy: PolicyBundle }) {
+  // The coordinator's ownership check, before it creates anything under the run. Absent outside a run.
+  private readonly guard: (() => void) | null;
+  constructor(o: {
+    id: string;
+    kind: CliKind;
+    repoRoot: string;
+    policy: PolicyBundle;
+    guard?: () => void;
+  }) {
+    this.guard = o.guard ?? null;
     this.id = o.id;
     this.kind = o.kind;
     this.repoRoot = o.repoRoot;
@@ -232,6 +241,7 @@ export class DelegateRelayAdapter implements WorkerAdapter {
     if (!auth.allowed) throw new CliRefused(auth.reason);
     const pins = verifyRelayPins(this.repoRoot);
     if (!pins.ok) throw new Error(`relay hash mismatch: ${pins.bad.join(', ')}`);
+    this.guard?.();
     mkdirSync(req.out_dir, { recursive: true });
     const out = openSync(join(req.out_dir, 'relay.stdout'), 'a');
     const err = openSync(join(req.out_dir, 'relay.stderr'), 'a');
@@ -380,6 +390,7 @@ export function makeRelayAdapters(o: {
   policy: PolicyBundle;
   repoRoot: string;
   home: string;
+  guard?: () => void;
 }): Record<string, WorkerAdapter> {
   const out: Record<string, WorkerAdapter> = {};
   for (const [id, kind] of [
@@ -387,7 +398,13 @@ export function makeRelayAdapters(o: {
     ['claude-relay', 'claude'],
     ['opencode-relay', 'opencode'],
   ] as const) {
-    out[id] = new DelegateRelayAdapter({ id, kind, repoRoot: o.repoRoot, policy: o.policy });
+    out[id] = new DelegateRelayAdapter({
+      id,
+      kind,
+      repoRoot: o.repoRoot,
+      policy: o.policy,
+      guard: o.guard,
+    });
   }
   return out;
 }

@@ -2,7 +2,7 @@
 // with one JSON line each. Tests use it to hold, stop, kill and replace a real coordinator lock.
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
-import { fstatSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, fstatSync, statSync, writeFileSync } from 'node:fs';
 import { prepareHome, lockPathIn } from '../../src/cli/home.ts';
 import { acquireLock, type CoordinatorLock } from '../../src/cli/lock.ts';
 import { RealCommandRunner } from '../../src/gates/runner.ts';
@@ -46,6 +46,21 @@ rl.on('line', async (line) => {
           layoutIno: ino,
           pid: process.pid,
         });
+        return;
+      }
+      case 'append-held': {
+        // The check passes, then this waits for a file before writing: the replacement lands between.
+        const [go] = rest as [string];
+        const store = new FsLedgerStore(join(home, 'runs', 'held', 'ledger', 'events.jsonl'), {
+          guard: () => {
+            (lock as CoordinatorLock).assertOwner();
+            say({ asserted: true });
+            const tick = new Int32Array(new SharedArrayBuffer(4));
+            while (!existsSync(go)) Atomics.wait(tick, 0, 0, 20);
+          },
+        });
+        store.appendRaw('in flight\n');
+        say({ appended: true });
         return;
       }
       case 'append':

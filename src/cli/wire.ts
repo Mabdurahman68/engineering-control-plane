@@ -156,7 +156,7 @@ export function wire(o: {
       },
     });
     adapters.mock = mock;
-  } else Object.assign(adapters, makeRelayAdapters({ policy, repoRoot: root, home }));
+  } else Object.assign(adapters, makeRelayAdapters({ policy, repoRoot: root, home, guard }));
   const failpoint = process.env.ECP_FAILPOINT;
   let failpointHits = 0;
   const engineRef: { current: Engine | null } = { current: null };
@@ -178,8 +178,10 @@ export function wire(o: {
       worktree: (run, task, gen) => join(home, 'worktrees', run, `${task}-g${gen}`),
       checkout: (run, name) => join(home, 'worktrees', run, `co-${name}`),
     },
-    // NAME or NAME@n, for the nth time that point is reached.
+    // NAME or NAME@n, for the nth time that point is reached. A test can also hold the process there,
+    // alive and owning the lock, until a file appears: ECP_FAILPOINT_HOLD and ECP_FAILPOINT_RELEASE.
     failpoint: (name) => {
+      holdAt(name);
       if (!failpoint) return;
       const [point, nth] = failpoint.split('@');
       if (name !== point) return;
@@ -187,9 +189,13 @@ export function wire(o: {
       if (failpointHits === Number(nth ?? 1)) process.kill(process.pid, 'SIGKILL');
     },
     pendingControl: () => pendingControlRequests(o.runId),
-    ackControl: (id) => rmSync(join(REQUESTS(o.runId), `${id}.json`), { force: true }),
+    ackControl: (id) => {
+      guard();
+      rmSync(join(REQUESTS(o.runId), `${id}.json`), { force: true });
+    },
     controlPollMs: 1000,
     notify: (kind, summary) => {
+      guard();
       appendFileSync(
         join(home, 'notifications.jsonl'),
         `${JSON.stringify({ at: new Date().toISOString(), run: o.runId, kind, summary })}\n`,
@@ -233,6 +239,19 @@ export function wire(o: {
     };
   }
   return { engine, store, ledger, policy, spec: o.spec, policySha, adapters };
+}
+
+const holdState = { hits: 0 };
+function holdAt(name: string) {
+  const at = process.env.ECP_FAILPOINT_HOLD;
+  const release = process.env.ECP_FAILPOINT_RELEASE;
+  if (!at || !release) return;
+  const [point, nth] = at.split('@');
+  if (name !== point) return;
+  holdState.hits++;
+  if (holdState.hits !== Number(nth ?? 1)) return;
+  const tick = new Int32Array(new SharedArrayBuffer(4));
+  while (!existsSync(release)) Atomics.wait(tick, 0, 0, 50);
 }
 
 function seededIds(seedText: string) {

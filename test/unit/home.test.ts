@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HomeRefused, prepareHome } from '../../src/cli/home.ts';
@@ -89,4 +89,31 @@ describe('test 17: an interrupted or concurrent first start', () => {
       for (const h of hs) h.child.kill('SIGKILL');
     }
   }, 60_000);
+});
+
+describe('test 17, the link race forced', () => {
+  it('another start publishes layout and clears this tmp just before this link: accepted, one layout', () => {
+    const home = tempDir('ecp-h-');
+    prepareHome({
+      home,
+      beforeLink: (tmp) => {
+        writeFileSync(join(home, 'layout'), 'ecp-home v2');
+        rmSync(tmp);
+      },
+    });
+    expect(readFileSync(join(home, 'layout'), 'utf8')).toBe('ecp-home v2');
+    expect(listing(home)).toEqual(['layout', 'runs']);
+  });
+  it('the same, but the other start left a bad layout: refused', () => {
+    const home = tempDir('ecp-h-');
+    expect(() =>
+      prepareHome({
+        home,
+        beforeLink: (tmp) => {
+          writeFileSync(join(home, 'layout'), 'ecp-ho');
+          rmSync(tmp);
+        },
+      }),
+    ).toThrow(HomeRefused);
+  });
 });
