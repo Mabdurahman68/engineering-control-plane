@@ -9,6 +9,7 @@ import { loadPolicy } from '../policy/load.ts';
 import { MockAdapter } from '../workers/mock/mock-adapter.ts';
 import { RealMockWorld } from '../workers/mock/real-world.ts';
 import { makeRelayAdapters } from '../workers/relay/adapter.ts';
+import { prepareHome } from './home.ts';
 import { ecpHome, loadMockScript, repoRoot } from './wire.ts';
 
 export async function evalCommand(args: string[]) {
@@ -50,6 +51,7 @@ export async function evalCommand(args: string[]) {
       }),
     };
   } else adapters = makeRelayAdapters({ policy, repoRoot: root, home: ecpHome() });
+  prepareHome();
   const outRoot = join(ecpHome(), 'eval', new Date().toISOString().replace(/[-:.]/g, ''));
   mkdirSync(outRoot, { recursive: true });
   const scores: TaskScore[] = [];

@@ -210,6 +210,7 @@ export type RunR = {
     push_intent: boolean;
   };
   pending_request: 'pause' | 'cancel' | null;
+  control_acked: string[];
   shadow: {
     decision_points: number;
     recorded: number;
@@ -300,6 +301,7 @@ export function initialRun(): RunR {
       push_intent: false,
     },
     pending_request: null,
+    control_acked: [],
     shadow: {
       decision_points: 0,
       recorded: 0,
@@ -863,7 +865,8 @@ function apply(s: RunR, ev: LedgerEvent): void {
       return;
     }
     case 'operator.request_received':
-      s.pending_request = d.request;
+      if (d.id) s.control_acked.push(d.id);
+      if (d.effective !== false) s.pending_request = d.request;
       return;
     case 'run.resumed':
       if (d.accept_policy) {

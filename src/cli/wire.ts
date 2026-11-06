@@ -9,7 +9,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parse } from 'yaml';
 import type { MockScript, PolicyBundle, Spec, WorkerAdapter } from '../contracts/index.ts';
@@ -31,14 +32,42 @@ import { RealKiller, RealScanner } from '../workers/relay/proc.ts';
 import { FsRunStore } from '../worktree/fs-store.ts';
 import { RealGit } from '../worktree/real-git.ts';
 import { makeRelayAdapters } from '../workers/relay/adapter.ts';
+import { homePath } from './home.ts';
+import type { CoordinatorLock } from './lock.ts';
 import { makePublisher } from '../publish/publisher.ts';
 
-export { coordinatorAlive, releaseLock, takeLock } from './lock.ts';
-
 export function ecpHome(): string {
-  return process.env.ECP_HOME ?? join(homedir(), '.ecp');
+  return homePath();
 }
 export const runDir = (runId: string) => join(ecpHome(), 'runs', runId);
+
+const REQUESTS = (runId: string) => join(runDir(runId), 'control', 'requests');
+
+// An operator request, as its own file, never overwriting another. The ID is the file name.
+export function writeControlRequest(runId: string, request: 'pause' | 'cancel'): string {
+  const id = `${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}`;
+  atomicWrite(join(REQUESTS(runId), `${id}.json`), JSON.stringify({ id, request }));
+  return id;
+}
+
+export function pendingControlRequests(
+  runId: string,
+): { id: string; request: 'pause' | 'cancel' }[] {
+  const dir = REQUESTS(runId);
+  if (!existsSync(dir)) return [];
+  const out: { id: string; request: 'pause' | 'cancel' }[] = [];
+  for (const f of readdirSync(dir).sort()) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const r = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+      if (r.request === 'pause' || r.request === 'cancel')
+        out.push({ id: f.slice(0, -5), request: r.request });
+    } catch {
+      // Not finished being written: the rename makes it whole before it can be read.
+    }
+  }
+  return out;
+}
 
 export function repoRoot(): string {
   return resolve(new URL('../..', import.meta.url).pathname);
@@ -58,7 +87,10 @@ export function dayUsageFrom(home: string, excludeRun: string, now: number) {
   for (const r of readdirSync(runs)) {
     if (r === excludeRun) continue;
     try {
-      const { events } = loadLedger(new FsLedgerStore(join(runs, r, 'ledger', 'events.jsonl')));
+      const { events } = loadLedger(
+        new FsLedgerStore(join(runs, r, 'ledger', 'events.jsonl'), { readOnly: true }),
+        { repair: false },
+      );
       const today = events.filter((e) => new Date(e.at).toDateString() === day);
       const f = computeFigures(today);
       out.invocations += f.invocations;
@@ -95,16 +127,19 @@ export function wire(o: {
   spec: Spec;
   policyDir?: string;
   mockScript?: MockScript | null;
+  lock: CoordinatorLock;
 }): Wired {
   const home = ecpHome();
+  // Every coordinator mutation, to the ledger or under the run, checks it still owns the lock.
+  const guard = () => o.lock.assertOwner();
   const root = repoRoot();
   const policyDir = o.policyDir ?? join(root, 'policy');
   const promptsDir = join(root, 'prompts');
   const policy = loadPolicy(policyDir);
   const policySha = policyHash(policy, promptsDir);
   const dir = runDir(o.runId);
-  const store = new FsRunStore(dir);
-  const ledger = new FsLedgerStore(join(dir, 'ledger', 'events.jsonl'));
+  const store = new FsRunStore(dir, guard);
+  const ledger = new FsLedgerStore(join(dir, 'ledger', 'events.jsonl'), { guard });
   const clock = new RealClock();
   const adapters: Record<string, WorkerAdapter> = {};
   let mock: MockAdapter | null = null;
@@ -124,11 +159,10 @@ export function wire(o: {
   } else Object.assign(adapters, makeRelayAdapters({ policy, repoRoot: root, home }));
   const failpoint = process.env.ECP_FAILPOINT;
   let failpointHits = 0;
-  const control = join(dir, 'control', 'request.json');
   const engineRef: { current: Engine | null } = { current: null };
   const ports: EnginePorts = {
     git: new RealGit(o.spec.target.repo_path),
-    runner: new RealCommandRunner(() => existsSync(control)),
+    runner: new RealCommandRunner(() => pendingControlRequests(o.runId).length > 0),
     store,
     ledgerStore: ledger,
     clock,
@@ -152,15 +186,9 @@ export function wire(o: {
       failpointHits++;
       if (failpointHits === Number(nth ?? 1)) process.kill(process.pid, 'SIGKILL');
     },
-    readControl: () => {
-      if (!existsSync(control)) return null;
-      try {
-        return JSON.parse(readFileSync(control, 'utf8'));
-      } catch {
-        return null;
-      }
-    },
-    clearControl: () => rmSync(control, { force: true }),
+    pendingControl: () => pendingControlRequests(o.runId),
+    ackControl: (id) => rmSync(join(REQUESTS(o.runId), `${id}.json`), { force: true }),
+    controlPollMs: 1000,
     notify: (kind, summary) => {
       appendFileSync(
         join(home, 'notifications.jsonl'),
@@ -311,9 +339,12 @@ export function loadMockScript(path: string): MockScript {
   return { ...parsed.data, default_plan } as MockScript;
 }
 
+// Observational: read-only, no repair, nothing created.
 export function readRun(runId: string) {
-  const store = new FsLedgerStore(join(runDir(runId), 'ledger', 'events.jsonl'));
-  const { events } = loadLedger(store);
+  const store = new FsLedgerStore(join(runDir(runId), 'ledger', 'events.jsonl'), {
+    readOnly: true,
+  });
+  const { events } = loadLedger(store, { repair: false });
   return { events, state: replay(events) };
 }
 

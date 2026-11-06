@@ -151,6 +151,8 @@ export type Sim = {
   failFn: (name: string) => void;
 };
 
+let controlSeq = 0;
+
 export function makePorts(o: {
   git: GitPort;
   runner: CommandRunner;
@@ -195,8 +197,16 @@ export function makePorts(o: {
       checkout: (run, name) => `${root}/${run}/co-${name}`,
     },
     failpoint: o.failpoint,
-    readControl: o.control.get,
-    clearControl: o.control.clear,
+    // A test sets sim.control; it gets an ID the first time it's seen, and goes once acknowledged.
+    pendingControl: () => {
+      const c = o.control.get() as any;
+      if (!c) return [];
+      c.id ??= `C-${++controlSeq}`;
+      return [{ id: c.id, request: c.request }];
+    },
+    ackControl: (id: string) => {
+      if ((o.control.get() as any)?.id === id) o.control.clear();
+    },
     notify: o.notify,
     dayUsage: () => ({ invocations: 0, wall_clock_s: 0, usd: 0, shadow_invocations: 0 }),
   };

@@ -1,4 +1,5 @@
-import { hostname, homedir } from 'node:os';
+import { hostname } from 'node:os';
+import { homePath } from '../../cli/home.ts';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import pins from './fake-cli-pins.json' with { type: 'json' };
@@ -103,7 +104,7 @@ export function machineId(): string {
 }
 
 export function proofPath(): string {
-  return join(process.env.ECP_HOME ?? join(homedir(), '.ecp'), 'isolation-proof.json');
+  return join(homePath(), 'isolation-proof.json');
 }
 
 function readProof(): Proof | null {

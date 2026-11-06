@@ -12,18 +12,17 @@ import { authoriseClis } from '../workers/relay/real-worker-guard.ts';
 import { replayCommand } from './replay-cmd.ts';
 import { evalCommand } from './eval-cmd.ts';
 import { isolationCommand } from './isolation-cmd.ts';
+import { HomeRefused, homePath, lockPathIn, prepareHome } from './home.ts';
+import { acquireLock, type CoordinatorLock, readLockMeta } from './lock.ts';
 import {
-  atomicWrite,
-  coordinatorAlive,
-  releaseLock,
   ecpHome,
   loadMockScript,
   loadSpecFile,
   readRun,
   repoRoot,
   runDir,
-  takeLock,
   wire,
+  writeControlRequest,
 } from './wire.ts';
 
 function fail(message: string, code = 1): never {
@@ -31,7 +30,30 @@ function fail(message: string, code = 1): never {
   process.exit(code);
 }
 
-const globalLock = () => join(ecpHome(), 'run.lock');
+// Validated before anything is created in it. A home this version didn't make is refused.
+function openHome(): string {
+  try {
+    return prepareHome();
+  } catch (err) {
+    if (err instanceof HomeRefused) fail(err.message, 3);
+    throw err;
+  }
+}
+
+// The kernel lock, held until this process ends or releases it. One active run at a time.
+function takeCoordinator(runId: string): CoordinatorLock {
+  const home = openHome();
+  const r = acquireLock(lockPathIn(home));
+  if (r.ok) {
+    r.lock.writeMeta(runId);
+    return r.lock;
+  }
+  if (r.held) {
+    const m = readLockMeta(lockPathIn(home));
+    fail(`another run is active${m ? ` (run ${m.run_id})` : ''}: one active run at a time`);
+  }
+  fail(`the coordinator lock could not be taken: ${r.error}`, 2);
+}
 
 async function cmdRun(args: string[]) {
   const { values, positionals } = parseArgs({
@@ -57,12 +79,8 @@ async function cmdRun(args: string[]) {
     const auth = authoriseClis(repoRoot(), process.env.PATH ?? '');
     if (!auth.allowed) fail(`refused: ${auth.reason}`, 3);
   }
-  if (!takeLock(globalLock())) {
-    fail(
-      'another run is active, or this machine could not say otherwise: one active run at a time',
-    );
-  }
-  const w = wire({ runId, spec, policyDir: values.policy, mockScript });
+  const lock = takeCoordinator(runId);
+  const w = wire({ runId, spec, policyDir: values.policy, mockScript, lock });
   w.store.write('spec.yaml', readFileSync(specPath, 'utf8'));
   w.store.write('policy.lock', JSON.stringify({ sha256: w.policySha }));
   w.store.write(
@@ -71,7 +89,7 @@ async function cmdRun(args: string[]) {
   );
   w.engine.createRun();
   const exit = await w.engine.loop();
-  releaseLock(globalLock());
+  lock.release();
   process.stdout.write(`${runId} ${exit.state}\n`);
   process.exitCode = exit.code;
 }
@@ -86,20 +104,28 @@ function loadRunConfig(runId: string) {
 async function runResume(
   runId: string,
   opts: { decisionFile?: string; accept?: boolean; extend?: number },
+  held?: CoordinatorLock,
 ) {
   const { spec, cfg } = loadRunConfig(runId);
-  if (!takeLock(globalLock())) fail('another run is active');
-  const w = wire({ runId, spec, policyDir: cfg.policy ?? undefined, mockScript: cfg.mock_script });
+  // A control command that took the lock passes it in: no release and re-take in between.
+  const lock = held ?? takeCoordinator(runId);
+  const w = wire({
+    runId,
+    spec,
+    policyDir: cfg.policy ?? undefined,
+    mockScript: cfg.mock_script,
+    lock,
+  });
   const locked = JSON.parse(w.store.read('policy.lock') as string).sha256;
   if (locked !== w.policySha && !opts.accept) {
-    releaseLock(globalLock());
+    lock.release();
     fail('policy changed since the run started: use --accept-policy-change', 1);
   }
   let decision: Record<string, unknown> | undefined;
   if (opts.decisionFile) {
     const parsed = decisionSchema.safeParse(parse(readFileSync(opts.decisionFile, 'utf8')));
     if (!parsed.success) {
-      releaseLock(globalLock());
+      lock.release();
       fail(`invalid decision: ${parsed.error.message}`);
     }
     decision = parsed.data;
@@ -113,7 +139,7 @@ async function runResume(
   });
   if (opts.accept) w.store.write('policy.lock', JSON.stringify({ sha256: w.policySha }));
   const exit = await w.engine.loop();
-  releaseLock(globalLock());
+  lock.release();
   process.stdout.write(`${runId} ${exit.state}\n`);
   process.exitCode = exit.code;
 }
@@ -143,14 +169,28 @@ async function cmdResume(args: string[]) {
 async function cmdControl(request: 'pause' | 'cancel', args: string[]) {
   const runId = args[0];
   if (!runId) fail(`usage: ecp ${request} <run-id>`, 2);
+  const home = openHome();
   if (!existsSync(runDir(runId))) fail(`no such run: ${runId}`);
-  atomicWrite(join(runDir(runId), 'control', 'request.json'), JSON.stringify({ request }));
-  // With no coordinator alive, apply it here: take the lock, reconcile, and act.
-  if (coordinatorAlive(globalLock())) {
-    process.stdout.write(`${request} requested\n`);
+  // Durable first: whatever happens next, the request is on disk, and every resume reads it.
+  writeControlRequest(runId, request);
+  const r = acquireLock(lockPathIn(home));
+  if (r.ok) {
+    // No coordinator: this process is it, for the moment, and applies the request itself.
+    r.lock.writeMeta(runId);
+    await runResume(runId, {}, r.lock);
     return;
   }
-  await runResume(runId, {});
+  if (r.held) {
+    const active = readLockMeta(lockPathIn(home))?.run_id ?? 'unknown';
+    process.stdout.write(
+      `${request} recorded for ${runId}; a coordinator is active (run ${active}). It applies at once if that is ${runId}, otherwise when ${runId} next resumes.\n`,
+    );
+    return;
+  }
+  process.stdout.write(
+    `${request} recorded for ${runId}; the lock could not be attempted: ${r.error}\n`,
+  );
+  process.exitCode = 2;
 }
 
 function cmdStatus(args: string[]) {
@@ -189,6 +229,8 @@ function cmdReport(args: string[]) {
 }
 
 async function cmdClean(args: string[]) {
+  // It removes worktrees, so it holds the lock like any other mutation.
+  const lock = takeCoordinator('clean');
   const runsDir = join(ecpHome(), 'runs');
   const ids = args[0] ? [args[0]] : existsSync(runsDir) ? readdirSync(runsDir) : [];
   for (const id of ids) {
@@ -199,6 +241,7 @@ async function cmdClean(args: string[]) {
     rmSync(join(ecpHome(), 'worktrees', id), { recursive: true, force: true });
     process.stdout.write(`cleaned ${id}\n`);
   }
+  lock.release();
 }
 
 function cmdMetrics() {
@@ -227,6 +270,9 @@ async function cmdDoctor(args: string[]) {
   } catch (err) {
     line(false, (err as Error).message);
   }
+  process.stdout.write(
+    `info home ${homePath()}. Don't point an older ecp's ECP_HOME at it, and keep it on a local APFS or HFS volume: the coordinator lock depends on both\n`,
+  );
   const pins = verifyRelayPins(root);
   line(
     pins.ok,
@@ -264,17 +310,23 @@ async function cmdPublish(args: string[]) {
   if (!positionals[0]) fail('usage: ecp publish <run-id> [--accept-base <sha>]', 2);
   const runId = positionals[0];
   const { spec, cfg } = loadRunConfig(runId);
-  if (!takeLock(globalLock())) fail('another run is active');
-  const w = wire({ runId, spec, policyDir: cfg.policy ?? undefined, mockScript: cfg.mock_script });
+  const lock = takeCoordinator(runId);
+  const w = wire({
+    runId,
+    spec,
+    policyDir: cfg.policy ?? undefined,
+    mockScript: cfg.mock_script,
+    lock,
+  });
   w.engine.loadForResume();
   try {
     w.engine.retryPublish(values['accept-base'] ?? null);
   } catch (err) {
-    releaseLock(globalLock());
+    lock.release();
     fail((err as Error).message);
   }
   const exit = await w.engine.loop();
-  releaseLock(globalLock());
+  lock.release();
   process.stdout.write(`${runId} ${exit.state}\n`);
   process.exitCode = exit.code;
 }

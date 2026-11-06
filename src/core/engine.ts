@@ -667,9 +667,8 @@ export class Engine {
       return;
     }
     if (opts.decision) this.applyDecision(opts.decision);
-    // A pause request made while paused changes nothing, and doesn't outlive the pause.
-    if (PAUSED.includes(this.s.state) && this.p.readControl()?.request === 'pause')
-      this.p.clearControl();
+    // Requests made while nothing ran are read before anything is dispatched.
+    this.pollControl();
     if (PAUSED.includes(this.s.state)) {
       const to = this.s.resume_to ?? 'EXECUTING';
       this.draining = null;
@@ -847,18 +846,32 @@ export class Engine {
     }
   }
 
-  private pollControl() {
-    const req = this.p.readControl();
-    if (!req) return;
-    this.p.clearControl();
-    if (
+  // Each request is acknowledged in the ledger, then its file goes: a crash between the two leaves the
+  // file, and its acknowledgement means it isn't acted on twice. A cancel outranks any pause, whatever the
+  // order they arrived in. A pause while paused, or anything once the run is stopping, changes nothing.
+  pollControl() {
+    const reqs = this.p.pendingControl();
+    if (reqs.length === 0) return;
+    const stopping =
       RUN_STOPPING.includes(this.s.state) &&
       !PAUSED.includes(this.s.state) &&
-      this.s.state !== 'ESCALATION_REQUIRED'
-    )
-      return;
-    if (PAUSED.includes(this.s.state) && req.request === 'pause') return;
-    this.append('operator.request_received', null, { request: req.request });
+      this.s.state !== 'ESCALATION_REQUIRED';
+    const cancelling =
+      this.s.pending_request === 'cancel' ||
+      reqs.some((r) => r.request === 'cancel' && !this.s.control_acked.includes(r.id));
+    for (const r of reqs) {
+      if (!this.s.control_acked.includes(r.id)) {
+        const effective =
+          !stopping && (r.request === 'cancel' || (!cancelling && !PAUSED.includes(this.s.state)));
+        this.append('operator.request_received', null, {
+          request: r.request,
+          id: r.id,
+          effective,
+        });
+        this.p.failpoint('control.between');
+      }
+      this.p.ackControl(r.id);
+    }
   }
 
   private async idle() {
@@ -875,6 +888,11 @@ export class Engine {
       for (const u of untils) if (u !== null && u > now && (wake === null || u < wake)) wake = u;
     }
     if (obs !== null && (wake === null || obs < wake)) wake = obs;
+    // A real coordinator looks for operator requests at least this often.
+    if (this.p.controlPollMs) {
+      const poll = this.now() + this.p.controlPollMs;
+      if (wake === null || poll < wake) wake = poll;
+    }
     if (this.notified) {
       this.notified = false;
       return;

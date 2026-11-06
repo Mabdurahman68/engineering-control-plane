@@ -59,8 +59,11 @@ export type EnginePorts = {
     checkout(runId: string, name: string): string;
   };
   failpoint(name: string): void;
-  readControl(): { request: 'pause' | 'cancel' } | null;
-  clearControl(): void;
+  // Operator requests, never overwritten: each is acknowledged in the ledger before its file goes.
+  pendingControl(): { id: string; request: 'pause' | 'cancel' }[];
+  ackControl(id: string): void;
+  // How often a real coordinator looks for requests while idle. Unset in simulation.
+  controlPollMs?: number;
   notify(kind: string, summary: string): void;
   // Sum of per-day figures from other runs' ledgers, under the global lock. Zero when absent.
   dayUsage(): {
