@@ -117,7 +117,7 @@ A symlink from elsewhere into the fixture directory is refused too, even though 
 
 A directory of numbered claims. The owner is the highest claim whose process is alive. A takeover claims the next number with a link, which either creates it or fails, and a claimant that then isn't highest gives up. Nobody removes or replaces a claim that could be someone's, so no age check is involved. The argument is in `src/cli/lock.ts`.
 
-Liveness has three answers. Dead needs evidence: `kill(pid, 0)` giving `ESRCH`, or the PID now belonging to a process that started later than the owner. `ps` runs with its time zone and locale fixed, and its answer has to parse as a whole start time. A failed, empty, partial or garbled answer isn't evidence, because `ps` can give those for its own failures. Anything else is unknown, and an owner isn't unseated on unknown. So a machine where `ps` is broken refuses to start a run, rather than risk two.
+Liveness has three answers. Dead needs evidence: `kill(pid, 0)` giving `ESRCH`, or the PID now belonging to a later process. A process's identity is one a clock change can't move. On Linux, `lstart` is boot time plus ticks, and boot time shifts when the wall clock is set, so the identity is the boot ID and the start ticks from `/proc`. On macOS, it's the start time the kernel records once at process start, read with `ps` under a fixed time zone and locale, which has to parse as a real time. Elsewhere there's none, and only `ESRCH` shows an owner gone. Anything that can't be read, or doesn't compare, isn't evidence. Anything else is unknown, and an owner isn't unseated on unknown. So a machine where `ps` is broken refuses to start a run, rather than risk two.
 
 ## Evidence for a semantic claim
 

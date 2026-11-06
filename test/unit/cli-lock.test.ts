@@ -8,6 +8,7 @@ import {
   liveness,
   lockHolder,
   parseStart,
+  parseStatTicks,
   procStart,
   releaseLock,
   takeLock,
@@ -114,8 +115,15 @@ describe('what counts as evidence that an owner is dead', () => {
   };
   const fine = () => {};
   const THEN = 'Thu Nov  5 10:00:00 2026';
-  const owner = { pid: 101, start: parseStart(THEN) };
+  const owner = { pid: 101, start: `darwin:${parseStart(THEN)}` };
   const says = (out: string | null) => () => out;
+  const mac = (signal: () => void, start: () => string | null) => ({
+    platform: 'darwin',
+    signal,
+    start,
+    stat: () => null,
+    bootId: () => null,
+  });
   it.each([
     ['the kernel says no such process', esrch, says(null), false],
     ['the PID now belongs to a later process', fine, says('Thu Nov  5 11:00:00 2026'), false],
@@ -138,22 +146,23 @@ describe('what counts as evidence that an owner is dead', () => {
     ["another user's process, empty", eperm, says(''), 'unknown'],
     ['the signal itself fails oddly', eagain, says('Thu Nov  5 11:00:00 2026'), 'unknown'],
   ])('%s', (_n, signal, start, expected) => {
-    expect(liveness(owner, { signal, start })).toBe(expected);
+    expect(liveness(owner, mac(signal, start))).toBe(expected);
   });
   it('a claim in an older format is never called reused', () => {
-    const old = { pid: 101, start: 'Thu Nov  5 10:00:00 2026' };
-    expect(liveness(old, { signal: fine, start: says('Thu Nov  5 11:00:00 2026') })).toBe(
-      'unknown',
-    );
+    // The raw text, and the bare instant an earlier version recorded: neither compares, so neither is reused.
+    for (const start of ['Thu Nov  5 10:00:00 2026', parseStart('Thu Nov  5 10:00:00 2026')]) {
+      const old = { pid: 101, start };
+      expect(liveness(old, mac(fine, says('Thu Nov  5 11:00:00 2026')))).toBe('unknown');
+    }
   });
   it.each([
-    ['ps gives no answer', { signal: fine, start: says(null) }],
-    ['ps prints a partial line', { signal: fine, start: says('Thu Nov') }],
-    ['ps prints garbage', { signal: fine, start: says('garbled output') }],
-    ['the signal fails oddly', { signal: eagain, start: says(null) }],
+    ['ps gives no answer', mac(fine, says(null))],
+    ['ps prints a partial line', mac(fine, says('Thu Nov'))],
+    ['ps prints garbage', mac(fine, says('garbled output'))],
+    ['the signal fails oddly', mac(eagain, says(null))],
   ])('%s after the first acquisition returned: no second owner', (_n, probes) => {
     const lock = fresh();
-    const a = { pid: 101, start: parseStart(THEN) };
+    const a = { pid: 101, start: `darwin:${parseStart(THEN)}` };
     expect(takeLock(lock, { me: a, alive: () => false })).toBe(true);
     // The contender's own start time is fine: only its look at the owner goes wrong.
     const bWon = takeLock(lock, { me: B, alive: (h) => liveness(h, probes) });
@@ -177,11 +186,89 @@ describe('what counts as evidence that an owner is dead', () => {
       }
     }
   });
-  it('real ps reporting a real process stays alive, and a real dead PID is dead', () => {
-    expect(liveness({ pid: process.pid, start: procStart(process.pid) })).toBe(true);
-    expect(liveness({ pid: 999_999, start: 'long ago' })).toBe(false);
-    expect(liveness({ pid: process.pid, start: '2000-01-01T00:00:00.000Z' })).toBe(false);
-    expect(liveness({ pid: process.pid, start: 'another time' })).toBe('unknown');
+  it.runIf(process.platform === 'darwin' || process.platform === 'linux')(
+    'a real process is alive, a real dead PID is dead, and an older start is a reuse',
+    () => {
+      const me = procStart(process.pid) as string;
+      expect(liveness({ pid: process.pid, start: me })).toBe(true);
+      expect(liveness({ pid: 999_999, start: me })).toBe(false);
+      expect(liveness({ pid: process.pid, start: 'another time' })).toBe('unknown');
+      const earlier =
+        process.platform === 'darwin'
+          ? 'darwin:2000-01-01T00:00:00.000Z'
+          : `${me.split(':').slice(0, 2).join(':')}:0`;
+      expect(liveness({ pid: process.pid, start: earlier })).toBe(false);
+    },
+  );
+});
+
+describe('a start time that is not a real one', () => {
+  it.each([
+    ['a weekday that does not fit the date', 'Xxx Nov  5 11:00:00 2026'],
+    ['the wrong weekday', 'Mon Nov  5 11:00:00 2026'],
+    ['31 November', 'Mon Nov 31 11:00:00 2026'],
+    ['hour 24', 'Thu Nov  5 24:00:00 2026'],
+    ['minute 60', 'Thu Nov  5 10:60:00 2026'],
+    ['a month that does not exist', 'Thu Xyz  5 10:00:00 2026'],
+    ['trailing text', 'Thu Nov  5 10:00:00 2026 extra'],
+  ])('%s is no start time', (_n, raw) => {
+    expect(parseStart(raw)).toBeNull();
+  });
+  it('a real one parses, with either padding', () => {
+    expect(parseStart('Thu Nov  5 10:00:00 2026')).toBe('2026-11-05T10:00:00.000Z');
+    expect(parseStart('Thu Nov 5 10:00:00 2026')).toBe('2026-11-05T10:00:00.000Z');
+  });
+});
+
+describe('Linux, where the wall clock moves lstart', () => {
+  const BOOT = 'b0';
+  const stat = (ticks: string) =>
+    `4242 (ecp (a) b) S 1 4242 4242 0 -1 4194304 1 0 0 0 0 0 0 0 20 0 1 0 ${ticks} 1 1`;
+  const linux = (o: {
+    ticks?: string | null;
+    boot?: string;
+    lstart?: string;
+    signal?: () => void;
+  }) => ({
+    platform: 'linux',
+    signal: o.signal ?? (() => {}),
+    // What a reading of lstart would say. The Linux identity must not depend on it.
+    start: () => o.lstart ?? null,
+    stat: () => (o.ticks === null ? null : stat(o.ticks ?? '500')),
+    bootId: () => o.boot ?? BOOT,
+  });
+  const owner = { pid: 4242, start: `linux:${BOOT}:500` };
+  it('reads the ticks after the last parenthesis, whatever the command name holds', () => {
+    expect(parseStatTicks(stat('500'))).toBe('500');
+    expect(parseStatTicks('garbled')).toBeNull();
+    expect(parseStatTicks(null)).toBeNull();
+  });
+  it('the clock set forward after acquisition: the owner stays', () => {
+    const lock = fresh();
+    expect(takeLock(lock, { me: owner, alive: () => false })).toBe(true);
+    // lstart now reads later. The boot ID and ticks haven't changed.
+    const probes = linux({ lstart: 'Thu Nov  5 10:00:01 2026' });
+    expect(liveness(owner, probes)).toBe(true);
+    const bWon = takeLock(lock, { me: B, alive: (h) => liveness(h, probes) });
+    assertNotForbidden(RULE, bWon, 'a clock change made a second owner');
+    expect(lockHolder(lock)?.pid).toBe(owner.pid);
+  });
+  it.each([
+    ['later ticks: a reused PID', { ticks: '900' }, false],
+    ['another boot: a reused PID', { boot: 'b1' }, false],
+    ['earlier ticks', { ticks: '100' }, 'unknown'],
+    ['stat unreadable', { ticks: null }, 'unknown'],
+    [
+      'no such process',
+      {
+        signal: () => {
+          throw Object.assign(new Error('x'), { code: 'ESRCH' });
+        },
+      },
+      false,
+    ],
+  ])('%s', (_n, o, expected) => {
+    expect(liveness(owner, linux(o as never))).toBe(expected);
   });
 });
 
