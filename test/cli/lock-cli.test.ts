@@ -234,6 +234,39 @@ describe('test 18: pause and cancel together', () => {
   }, 120_000);
 });
 
+describe('a cancel at an escalation, through the CLI', () => {
+  it('a coordinator held at its escalation: the waiting cancel sees it taken up, and the run is cancelled', async () => {
+    const c = cliEnv({ script: [{ match: { step: 'acceptance' }, behaviour: 'reviewer_fail' }] });
+    const release = join(c.home, 'release-escalation');
+    // The run's first notification is its escalation's: the coordinator is held just after it.
+    const running = c.runAsync(c.startArgs('r1'), {
+      ECP_FAILPOINT_HOLD: 'after:notification.sent@1',
+      ECP_FAILPOINT_RELEASE: release,
+    });
+    expect(
+      await until(
+        () =>
+          ledgerEvents(c.home, 'r1').some(
+            (e) => e.type === 'run.state_changed' && e.data.to === 'ESCALATION_REQUIRED',
+          ),
+        120_000,
+      ),
+    ).toBe(true);
+    const cancel = c.runAsync(['cancel', 'r1'], { ECP_CONTROL_WAIT_MS: '30000' });
+    await new Promise((r) => setTimeout(r, 1000));
+    writeFileSync(release, '');
+    const [end, said] = await Promise.all([running, cancel]);
+    assertNotForbidden(
+      CONTROL,
+      end.stdout.trim() !== 'r1 CANCELLED',
+      `coordinator ended ${end.stdout.trim()}`,
+    );
+    expect(said.stdout).toMatch(/cancel for r1 taken up by the active coordinator|r1 CANCELLED/);
+    expect(acks(c.home, 'r1')).toHaveLength(1);
+    expect(requests(c.home, 'r1')).toEqual([]);
+  }, 240_000);
+});
+
 describe('test 19: a crash around the acknowledgement', () => {
   it('after the ledger event, before the file goes: resume removes it without acting twice', async () => {
     const c = cliEnv({ script: slow(8000) });

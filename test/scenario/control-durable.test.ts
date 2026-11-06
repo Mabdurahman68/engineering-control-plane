@@ -73,3 +73,35 @@ describe('requests arriving while a coordinator stops', () => {
     expect((await resumeSim(sim, { controlOnly: true })).state).toBe('CANCELLED');
   });
 });
+
+describe('a cancel at an escalation', () => {
+  it('arriving as the run escalates, before its last look: applied, not just acknowledged', async () => {
+    const sim: any = makeSim({
+      script: [{ match: { step: 'acceptance' }, behaviour: 'reviewer_fail' }] as never,
+    });
+    let sent = false;
+    sim.failFn = (n: string) => {
+      if (
+        n === 'after:run.state_changed' &&
+        !sent &&
+        sim.engine.s.state === 'ESCALATION_REQUIRED'
+      ) {
+        sent = true;
+        sim.controls.push({ request: 'cancel' });
+      }
+    };
+    const exit = await runSim(sim);
+    expect(sent).toBe(true);
+    assertNotForbidden(
+      RULE,
+      exit.state !== 'CANCELLED',
+      `stopped in ${exit.state}, cancel acknowledged`,
+    );
+    expect(sim.engine.s.pending_request).toBeNull();
+    expect(sim.controls).toEqual([]);
+    const cancelled = ofType(sim, 'run.state_changed').filter(
+      (e: any) => e.data.to === 'CANCELLED',
+    );
+    expect(cancelled).toHaveLength(1);
+  });
+});

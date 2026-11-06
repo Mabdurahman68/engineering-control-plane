@@ -710,7 +710,7 @@ export class Engine {
           // One last look before stopping: a cancel that came in while a pause was completing is
           // this coordinator's to apply, not something to leave on disk.
           this.pollControl();
-          if (this.s.pending_request === 'cancel' && PAUSED.includes(this.s.state)) continue;
+          if (this.cancelActionable()) continue;
           break;
         }
         if (!progressed) await this.idle();
@@ -720,6 +720,21 @@ export class Engine {
       await this.failFromError(err);
     }
     return this.finish();
+  }
+
+  // An acknowledged cancel this run can still act on: paused, escalated, or anywhere short of an end.
+  private cancelActionable(): boolean {
+    return (
+      this.s.pending_request === 'cancel' &&
+      ![
+        'PR_OPENED',
+        'FAILED',
+        'CANCELLED',
+        'MOCK_RUN_COMPLETE',
+        'READY_FOR_HUMAN_MERGE',
+        'PUSH_BLOCKED',
+      ].includes(this.s.state)
+    );
   }
 
   private shouldContinueAfterStop(): boolean {
@@ -930,17 +945,7 @@ export class Engine {
       });
       return true;
     }
-    if (
-      s.pending_request === 'cancel' &&
-      ![
-        'PR_OPENED',
-        'FAILED',
-        'CANCELLED',
-        'MOCK_RUN_COMPLETE',
-        'READY_FOR_HUMAN_MERGE',
-        'PUSH_BLOCKED',
-      ].includes(s.state)
-    ) {
+    if (this.cancelActionable()) {
       await this.doCancel();
       return true;
     }

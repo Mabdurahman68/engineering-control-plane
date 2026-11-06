@@ -242,12 +242,10 @@ describe('test 7, with the replacement between one append’s check and its writ
     const h = await start(home);
     expect((await h.ask('acquire')).ok).toBe(true);
     const go = join(tempDir('ecp-go-'), 'go');
-    h.child.stdin?.write(`append-held ${go}\n`);
-    // Wait for the check to pass, then replace the lock before the write goes ahead.
+    // The holder says when its check has passed; only then is the lock replaced, before the write.
+    expect((await h.ask(`append-held ${go}`)).asserted).toBe(true);
     const { until } = await import('../support/fake-cli.ts');
     const p = join(home, 'runs/held/ledger/events.jsonl');
-    expect(await until(() => existsSync(join(home, 'coordinator.lock')), 5000)).toBe(true);
-    await new Promise((r) => setTimeout(r, 300));
     const lock = join(home, 'coordinator.lock');
     renameSync(lock, `${lock}.moved`);
     writeFileSync(lock, '');
