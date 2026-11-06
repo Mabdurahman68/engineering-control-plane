@@ -123,9 +123,11 @@ describe('control details', () => {
     sim.control = { request: 'pause' };
     const again = await resumeSim(sim);
     expect(again.state).toBe('PAUSED_BUDGET');
-    expect(
-      ofType(sim, 'operator.request_received').filter((e) => e.data.request === 'pause').length,
-    ).toBe(0);
+    // Acknowledged, as every request is, so it can't be acted on later; marked as having no effect.
+    const acks = ofType(sim, 'operator.request_received').filter((e) => e.data.request === 'pause');
+    expect(acks).toHaveLength(1);
+    expect(acks[0]?.data.effective).toBe(false);
+    expect(sim.engine.s.pending_request).toBeNull();
   });
   it('cancel works on a paused run', async () => {
     const sim = makeSim({

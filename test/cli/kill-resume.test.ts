@@ -1,4 +1,4 @@
-import { lockHolder } from '../../src/cli/lock.ts';
+import { readLockMeta } from '../../src/cli/lock.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -146,7 +146,7 @@ describe('AC-D: kill at each boundary, resume, same terminal state', () => {
   it('a stale lock from a dead process does not block a resume', async () => {
     const c = cliEnv();
     await c.runAsync(c.startArgs(), { ECP_FAILPOINT: 'after:plan.intent' });
-    expect(lockHolder(join(c.home, 'run.lock'))?.pid).toBeTypeOf('number');
+    expect(readLockMeta(join(c.home, 'coordinator.lock'))?.pid).toBeTypeOf('number');
     const end = await c.runAsync(['resume', 'r1']);
     expect(end.stdout.trim()).toBe('r1 MOCK_RUN_COMPLETE');
   }, 60_000);
