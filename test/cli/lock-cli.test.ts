@@ -253,7 +253,8 @@ describe('a cancel at an escalation, through the CLI', () => {
       ),
     ).toBe(true);
     const cancel = c.runAsync(['cancel', 'r1'], { ECP_CONTROL_WAIT_MS: '30000' });
-    await new Promise((r) => setTimeout(r, 1000));
+    // Released only once the cancel's request is on disk, however slowly that process starts.
+    expect(await until(() => requests(c.home, 'r1').length === 1, 60_000)).toBe(true);
     writeFileSync(release, '');
     const [end, said] = await Promise.all([running, cancel]);
     assertNotForbidden(
