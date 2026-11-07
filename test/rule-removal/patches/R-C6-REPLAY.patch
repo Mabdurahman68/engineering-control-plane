@@ -1,0 +1,17 @@
+diff --git a/src/shadow/replay.ts b/src/shadow/replay.ts
+index d3057c6..888ea4c 100644
+--- a/src/shadow/replay.ts
++++ b/src/shadow/replay.ts
+@@ -25,12 +25,8 @@ export async function replayDecision(
+   ports: ReplayPorts,
+   replayId: string,
+ ): Promise<ReplayResult> {
+-  if (!ports.isDisposableFixture)
+-    return { status: 'NOT_REPLAYABLE', reason: 'not a disposable fixture' };
+   if (p.shadow.status !== 'RECORDED' || !p.shadow.report)
+     return { status: 'NOT_REPLAYABLE', reason: 'no recorded proposal' };
+-  if (p.comparison.proposal_legal !== true)
+-    return { status: 'NOT_REPLAYABLE', reason: 'the proposal is illegal' };
+   if (p.comparison.match === true)
+     return { status: 'NOT_REPLAYABLE', reason: 'no disagreement to replay' };
+   if (!p.subject_tree) return { status: 'NOT_REPLAYABLE', reason: 'no subject tree' };

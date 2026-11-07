@@ -1,0 +1,13 @@
+diff --git a/src/review/fingerprint.ts b/src/review/fingerprint.ts
+index a5af74c..152a1b8 100644
+--- a/src/review/fingerprint.ts
++++ b/src/review/fingerprint.ts
+@@ -71,7 +71,7 @@ export async function computeFinding(
+     stall_key,
+     anchor,
+     defect_digest,
+-    fingerprint: `${stall_key}|${anchor}|${defect_digest}`,
++    fingerprint: `${stall_key}|anchor|digest`,
+   };
+ }
+ 

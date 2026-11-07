@@ -1,0 +1,13 @@
+diff --git a/src/core/selectors.ts b/src/core/selectors.ts
+index 47acea7..2f6bd56 100644
+--- a/src/core/selectors.ts
++++ b/src/core/selectors.ts
+@@ -53,7 +53,7 @@ export function reviewFamilies(policy: PolicyBundle): string[] {
+ export function rungWouldStrandReview(s: RunR, policy: PolicyBundle, rung: string): boolean {
+   const reserved = reservedFamilies(s);
+   reserved.add(familyOfRung(policy, rung));
+-  return !reviewFamilies(policy).some((f) => !reserved.has(f));
++  return false;
+ }
+ 
+ export function openWriters(s: RunR): number {

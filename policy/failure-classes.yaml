@@ -1,0 +1,7 @@
+schema: failure_classes.v1
+adapters:
+  default:
+    - { class: AUTH, pattern: 'not authenticated|\b401\b|\blogin\b|unauthori[sz]ed|session expired', source: inferred }
+    - { class: QUOTA, pattern: 'usage limit|quota|insufficient|credits', source: inferred }
+    - { class: RATE_LIMIT, pattern: '\b429\b|rate limit|overloaded', source: inferred }
+    - { class: OUTAGE, pattern: '\b5\d\d\b|connection (error|refused|reset)|ECONNRESET|ENOTFOUND|service unavailable', source: inferred }

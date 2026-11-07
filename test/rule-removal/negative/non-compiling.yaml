@@ -1,0 +1,21 @@
+rules:
+  - id: R-C1-CONSISTENCY
+    source: harness negative case
+    patch: test/rule-removal/negative/non-compiling.patch
+    removes: "non-compiling"
+    removed_predicate: "none"
+    touches: [src/review/consistency.ts]
+    must_fail:
+      [
+        {
+          file: test/unit/review/consistency.test.ts,
+          test_name: "rejects a PASS over a properly linked failure",
+        },
+      ]
+    must_pass:
+      [
+        {
+          file: test/unit/review/consistency.test.ts,
+          test_name: "accepts a consistent PASS and a consistent FAIL",
+        },
+      ]

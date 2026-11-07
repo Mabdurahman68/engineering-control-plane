@@ -1,0 +1,14 @@
+diff --git a/src/shadow/outcome.ts b/src/shadow/outcome.ts
+index 0b4e484..ce312bf 100644
+--- a/src/shadow/outcome.ts
++++ b/src/shadow/outcome.ts
+@@ -45,8 +45,7 @@ export function observedOutcome(
+     if (predictions.every((p) => p.status === 'not_observed'))
+       return out('CONSISTENT_WITH_COORDINATOR', 'repair_vs_proceed_not_observed_provisional');
+   }
+-  // Fallback choices such as next_rung versus wait stay undetermined, and so do escalations here.
+-  return out('UNDETERMINED', null);
++  return out('CONSISTENT_WITH_SHADOW', 'any');
+ }
+ 
+ const OPTION_ACTION: Record<string, string> = {

@@ -1,0 +1,7 @@
+{
+  "name": "delta",
+  "version": "4.0.1",
+  "dependencies": {
+    "right": "3.0.0"
+  }
+}

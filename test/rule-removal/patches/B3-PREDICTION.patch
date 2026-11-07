@@ -1,0 +1,13 @@
+diff --git a/src/shadow/predictions.ts b/src/shadow/predictions.ts
+index 4f9030a..e18a1dc 100644
+--- a/src/shadow/predictions.ts
++++ b/src/shadow/predictions.ts
+@@ -83,7 +83,7 @@ export function matchPrediction(
+     for (const e of within) {
+       if (e.type !== 'review.collected' || !sameTask(e)) continue;
+       for (const f of (e.data.findings ?? []) as any[]) {
+-        if (f.stall_key === key) {
++        if (f.stall_key === key || (f.criterion === p.criterion && f.file === p.file)) {
+           return {
+             index,
+             predicted_stall_key: key,

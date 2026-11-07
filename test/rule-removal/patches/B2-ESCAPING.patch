@@ -1,0 +1,13 @@
+diff --git a/src/core/recovery.ts b/src/core/recovery.ts
+index cd15c99..c3febd7 100644
+--- a/src/core/recovery.ts
++++ b/src/core/recovery.ts
+@@ -124,7 +124,7 @@ export async function reconcileOpenAttempts(e: Engine): Promise<void> {
+   recoverUsage(e, events);
+   await reconcileOpenGates(e, events);
+   for (const a of Object.values(e.s.attempts)) {
+-    if (a.finished || a.fenced || a.class !== null) continue;
++    if (a.fenced) continue;
+     const rung = e.rung(a.rung);
+     const adapter = rung ? e.p.adapters[rung.adapter] : undefined;
+     const scan = await e.p.scanner.scan(ref(a));

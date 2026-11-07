@@ -1,0 +1,27 @@
+schema: risk_rules.v1
+default_risk: medium
+doc_only_risk: low
+doc_globs: ['**/*.md', '**/*.txt', 'docs/**']
+rules:
+  - { when: { path_glob: 'auth/**' }, min_risk: high }
+  - { when: { path_glob: '**/auth/**' }, min_risk: high }
+  - { when: { path_glob: '**/*session*' }, min_risk: high }
+  - { when: { path_glob: '**/*token*' }, min_risk: high }
+  - { when: { path_glob: '**/*crypto*' }, min_risk: high }
+  - { when: { path_glob: '**/*permission*' }, min_risk: high }
+  - { when: { path_glob: '**/*secret*' }, min_risk: high }
+  - { when: { path_glob: '**/migrations/**' }, min_risk: high }
+  - { when: { path_glob: 'migrations/**' }, min_risk: high }
+  - { when: { path_glob: '**/schema.*' }, min_risk: high }
+  - { when: { keyword: 'DROP TABLE' }, min_risk: high }
+  - { when: { keyword: 'TRUNCATE' }, min_risk: high }
+  - { when: { path_glob: 'deploy/**' }, min_risk: high }
+  - { when: { path_glob: 'infra/**' }, min_risk: high }
+  - { when: { path_glob: '.github/workflows/**' }, min_risk: high }
+  - { when: { path_glob: '**/Dockerfile*' }, min_risk: high }
+  - { when: { path_glob: '**/package.json' }, min_risk: medium }
+  - { when: { path_glob: '**/pnpm-lock.yaml' }, min_risk: medium }
+  - { when: { path_glob: '**/package-lock.json' }, min_risk: medium }
+  - { when: { data_class: irreversible }, min_risk: critical }
+  - { when: { data_class: payment }, min_risk: critical }
+  - { when: { data_class: personal }, min_risk: critical }

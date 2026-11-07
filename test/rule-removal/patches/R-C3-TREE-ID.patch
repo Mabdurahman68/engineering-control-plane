@@ -1,0 +1,14 @@
+diff --git a/src/gates/gates.ts b/src/gates/gates.ts
+index 355e40c..c78f02a 100644
+--- a/src/gates/gates.ts
++++ b/src/gates/gates.ts
+@@ -263,7 +263,8 @@ export async function runGates(input: GateInput): Promise<GateOutcome> {
+ 
+   // Tree identity: anything a gate command changed voids all evidence from this run.
+   const after = await git.worktreeTree(input.checkout);
+-  const identity = checkTreeId(tree, after);
++  const identity = checkTreeId(tree, tree);
++  void after;
+   out.push(result('H-TREE-ID', false, tree, identity));
+   let treeChanged: string[] | null = null;
+   if (!identity.ok) {

@@ -1,0 +1,22 @@
+diff --git a/src/publish/gate.ts b/src/publish/gate.ts
+index b9d8ef1..ee82acb 100644
+--- a/src/publish/gate.ts
++++ b/src/publish/gate.ts
+@@ -73,7 +73,7 @@ async function isAncestor(repo: string, a: string, b: string): Promise<boolean |
+ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+   const failures: GateFailure[] = [];
+   const fail = (id: string, detail: string) => failures.push({ id, detail });
+-  if (!FULL_SHA.test(i.frozen)) fail('H-PUSH-TREE', `frozen commit isn't a full SHA: ${i.frozen}`);
++  if (i.frozen === '' && !FULL_SHA.test(i.frozen)) fail('H-PUSH-TREE', `frozen commit isn't a full SHA: ${i.frozen}`);
+ 
+   // H-PUSH-BRANCH
+   const branch = checkBranch(i);
+@@ -81,7 +81,7 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+ 
+   // H-PUSH-TREE
+   const tree = (await git(['rev-parse', `${i.frozen}^{tree}`], { cwd: i.repo })).stdout.trim();
+-  if (tree !== i.reviewedTree)
++  if (tree === null)
+     fail('H-PUSH-TREE', `frozen tree ${tree} isn't the reviewed tree ${i.reviewedTree}`);
+ 
+   // The range. Secret, name and file rules all read this one enumeration.

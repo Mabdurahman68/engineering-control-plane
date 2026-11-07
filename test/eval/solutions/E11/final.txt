@@ -1,0 +1,5 @@
+Done.
+
+```json
+{"findings": [{"file": "src/pay.mjs", "hunk": "refund"}, {"file": "src/session.mjs", "hunk": "expiry"}, {"file": "src/store.mjs", "hunk": "query"}]}
+```

@@ -1,0 +1,13 @@
+diff --git a/src/core/recovery.ts b/src/core/recovery.ts
+index cd15c99..41b92d2 100644
+--- a/src/core/recovery.ts
++++ b/src/core/recovery.ts
+@@ -61,7 +61,7 @@ export type ProofInput = {
+   deadlineMs: number;
+ };
+ export function planRecovery(p: ProofInput): 'reattach' | 'kill' {
+-  if (!p.started || p.pid === null) return 'kill';
++  if (p.pid === null) return 'kill';
+   if (!p.alive) return 'kill';
+   if (p.now >= p.deadlineMs + 60_000) return 'kill';
+   const proc = p.scan.find((x) => x.pid === p.pid);

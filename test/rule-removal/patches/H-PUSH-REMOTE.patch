@@ -1,0 +1,21 @@
+diff --git a/src/publish/gate.ts b/src/publish/gate.ts
+index b9d8ef1..1cbc0aa 100644
+--- a/src/publish/gate.ts
++++ b/src/publish/gate.ts
+@@ -157,14 +157,14 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+   if ('prefix' in i.destinationRule) {
+     const namespace = `refs/heads/${i.destinationRule.prefix}`;
+     for (const name of remote.keys()) {
+-      if (name.startsWith(namespace) && name !== `refs/heads/${i.destination}`)
++      if (name === namespace)
+         fail('H-PUSH-REMOTE', `unexpected ref ${name}`);
+     }
+   }
+   const existing = remote.get(`refs/heads/${i.destination}`);
+   if (existing && existing !== i.frozen) {
+     const ok = await isAncestor(i.repo, existing, i.frozen);
+-    if (ok !== true)
++    if (ok === null)
+       fail(
+         'H-PUSH-REMOTE',
+         `${i.destination} is at ${existing}, not an ancestor of the frozen commit`,

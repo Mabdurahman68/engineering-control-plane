@@ -1,0 +1,13 @@
+diff --git a/src/core/steps-verify.ts b/src/core/steps-verify.ts
+index cb095ed..495f138 100644
+--- a/src/core/steps-verify.ts
++++ b/src/core/steps-verify.ts
+@@ -453,7 +453,7 @@ async function finishVerify(e: Engine): Promise<boolean> {
+       ],
+     });
+   }
+-  if (e.s.mock_review_seen) {
++  if (e.s.mock_review_seen === null) {
+     e.decide('DP-VERIFY', null, 'mark_ready', null, 'VERIFYING', 'MOCK_RUN_COMPLETE', {}, tree);
+     e.runTo('MOCK_RUN_COMPLETE', 'verified_mock', { reason: 'mock review: orchestration only' });
+     return true;

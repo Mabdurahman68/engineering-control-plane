@@ -1,0 +1,21 @@
+diff --git a/src/core/engine.ts b/src/core/engine.ts
+index f50a8ab..d5d3c68 100644
+--- a/src/core/engine.ts
++++ b/src/core/engine.ts
+@@ -324,7 +324,6 @@ export class Engine {
+   }
+ 
+   rungAvailable(r: string): boolean {
+-    if (this.apiKeyBarred(r)) return false;
+     const h = this.health.get(r);
+     if (!h?.ok) return false;
+     const q = this.s.quarantine[r];
+@@ -429,7 +428,7 @@ export class Engine {
+       timeout_s: a.timeout_s,
+       session_id: sessionId,
+       // Credentials are for API-key rungs only. A subscription rung can't be handed one by configuration.
+-      env_allowlist: rung.auth_mode === 'api_key' ? rung.credential_env : [],
++      env_allowlist: rung.credential_env,
+       meta: {
+         task_id: a.task_id,
+         step: a.step,

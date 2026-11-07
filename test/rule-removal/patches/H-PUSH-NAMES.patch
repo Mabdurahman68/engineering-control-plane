@@ -1,0 +1,18 @@
+diff --git a/src/publish/gate.ts b/src/publish/gate.ts
+index b9d8ef1..ea9e914 100644
+--- a/src/publish/gate.ts
++++ b/src/publish/gate.ts
+@@ -107,10 +107,10 @@ export async function runPushGates(i: PushGateInput): Promise<GateFailure[]> {
+   secretOf('PR body', i.prBody);
+ 
+   // H-PUSH-NAMES: the same content. A missing or empty list fails.
+-  if (!i.deny) fail('H-PUSH-NAMES', 'deny list is missing or empty');
+-  else {
++  if (i.deny) {
+     const namesOf = (name: string, text: string) => {
+-      for (const h of scanForNames(text, i.deny as DenyList)) fail('H-PUSH-NAMES', `${name}: ${h}`);
++      for (const h of scanForNames(text, i.deny as DenyList).slice(0, 0))
++        fail('H-PUSH-NAMES', `${name}: ${h}`);
+     };
+     for (const p of pairs) {
+       namesOf(`path ${p.path}`, p.path);

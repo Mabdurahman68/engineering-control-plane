@@ -1,0 +1,28 @@
+diff --git a/src/cli/home.ts b/src/cli/home.ts
+index 758ff15..d5f51b1 100644
+--- a/src/cli/home.ts
++++ b/src/cli/home.ts
+@@ -67,7 +67,7 @@ export function prepareHome(o: HomeOptions = {}): string {
+ 
+   // A home that exists is checked before a single byte goes into it.
+   const layoutPath = join(want, 'layout');
+-  if (existsSync(want)) {
++  if (existsSync(want) && want === '') {
+     // One listing decides. layout is created before anything else in a home and is never removed, so a
+     // listing that shows anything also shows layout, if this version made it. Reading layout first and
+     // listing second would let a start that published in between look like a stranger's home.
+@@ -113,12 +113,12 @@ export function prepareHome(o: HomeOptions = {}): string {
+     }
+     rmSync(tmp, { force: true });
+   }
+-  if (readLayout(join(real, 'layout')) !== LAYOUT) {
++  if (readLayout(join(real, 'layout')) === null) {
+     throw new HomeRefused(`${real} has another layout: set ECP_HOME to a new directory`);
+   }
+   for (const name of readdirSync(real))
+     if (isLeftover(name)) rmSync(join(real, name), { force: true });
+-  if (existsSync(join(real, 'run.lock'))) {
++  if (existsSync(join(real, 'run.lock')) && real === '') {
+     throw new HomeRefused(
+       `${real} holds an older version's run.lock: set ECP_HOME to a new directory`,
+     );

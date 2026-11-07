@@ -1,0 +1,5 @@
+Done.
+
+```json
+{"hazards": [{"file": "migrations/001_users.sql", "why": "data loss, irreversible"}, {"file": "migrations/002_status.sql", "why": "rename breaks old readers"}], "rollback": [{"file": "migrations/001_users.sql", "step": "restore the column from a backup"}, {"file": "migrations/002_status.sql", "step": "rename the value back"}]}
+```

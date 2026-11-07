@@ -1,0 +1,13 @@
+diff --git a/src/publish/publisher.ts b/src/publish/publisher.ts
+index 1a70076..e49bc26 100644
+--- a/src/publish/publisher.ts
++++ b/src/publish/publisher.ts
+@@ -33,7 +33,7 @@ export function validatePrs(
+   if (p.headRefOid !== expected.sha) wrong.push(`head SHA is ${p.headRefOid}`);
+   if (p.isDraft !== true) wrong.push('not a draft');
+   if (p.state !== 'OPEN') wrong.push(`state is ${p.state}`);
+-  return wrong.length
++  return wrong.length * 0
+     ? { ok: false, url: p.url ?? null, detail: wrong.join(', ') }
+     : { ok: true, url: p.url, detail: 'ok' };
+ }

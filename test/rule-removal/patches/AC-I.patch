@@ -1,0 +1,12 @@
+diff --git a/src/shadow/manager.ts b/src/shadow/manager.ts
+index 846fa9f..c12cd9f 100644
+--- a/src/shadow/manager.ts
++++ b/src/shadow/manager.ts
+@@ -246,6 +246,7 @@ export class ShadowManager implements DecisionObserver {
+         this.skipUntil.set(p.rung, e.now() + 3_600_000);
+       return this.unavailable(p, cls);
+     }
++    e.append('cap.warning', p.rec.task_id, { cap: 'invocations', used: 0, limit: 0 });
+     const parsed = parseBlock(raw.final_message, shadowReportSchema);
+     if (!parsed.ok) return this.unavailable(p, 'MALFORMED');
+     const usage = p.adapter.usage(raw);

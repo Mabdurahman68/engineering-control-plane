@@ -1,0 +1,13 @@
+diff --git a/src/review/effective.ts b/src/review/effective.ts
+index fbfaaff..b3c9782 100644
+--- a/src/review/effective.ts
++++ b/src/review/effective.ts
+@@ -30,7 +30,7 @@ export function effectiveVerdict(
+     const refs = c.finding_refs.filter((i) => blockingIdx.has(i));
+     const bound = refs.every((i) =>
+       waivers.some(
+-        (w) => w.resolves.finding_fingerprint === fp(i) && w.resolves.criterion === c.ac,
++        (w) => w.resolves.finding_fingerprint === fp(i),
+       ),
+     );
+     if (!bound || refs.length === 0) unresolved.push(`criterion:${c.ac}`);

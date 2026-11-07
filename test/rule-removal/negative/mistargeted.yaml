@@ -1,0 +1,10 @@
+rules:
+  - id: H-PUSH-SECRET
+    source: harness negative case
+    patch: test/rule-removal/negative/mistargeted.patch
+    removes: "mistargeted"
+    removed_predicate: "none"
+    touches: [src/publish/gate.ts]
+    must_fail:
+      [{ file: test/publish/gates.test.ts, test_name: "a secret in a commit message blocks" }]
+    must_pass: [{ file: test/publish/gates.test.ts, test_name: "passes every gate" }]

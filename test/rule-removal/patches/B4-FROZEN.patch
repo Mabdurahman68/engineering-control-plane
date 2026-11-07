@@ -1,0 +1,23 @@
+diff --git a/src/publish/publisher.ts b/src/publish/publisher.ts
+index 1a70076..fca654e 100644
+--- a/src/publish/publisher.ts
++++ b/src/publish/publisher.ts
+@@ -109,7 +109,8 @@ export function makePublisher(o: {
+     async push(c, sha) {
+       const p = c.spec.publish;
+       if (!p) return { ok: false, detail: 'no publish block' };
+-      const r = await git(pushArgv(p.remote_url, sha, c.destination), {
++      const moving = (await git(['rev-parse', sha.length ? `refs/heads/${c.destination}` : sha], { cwd: repoOf(c) })).stdout.trim();
++      const r = await git(pushArgv(p.remote_url, moving, c.destination), {
+         cwd: repoOf(c),
+         okCodes: [0, 1, 128],
+       });
+@@ -120,7 +121,7 @@ export function makePublisher(o: {
+     async verifyPush(c, sha) {
+       const at = await this.remoteAt(c);
+       return {
+-        ok: at === sha,
++        ok: at !== null,
+         detail: at === sha ? 'verified' : `remote is at ${at}`,
+         observed: at,
+       };
