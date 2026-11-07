@@ -1,17 +1,17 @@
 diff --git a/src/cli/home.ts b/src/cli/home.ts
-index eaa1b88..1da377f 100644
+index 758ff15..d5f51b1 100644
 --- a/src/cli/home.ts
 +++ b/src/cli/home.ts
-@@ -65,7 +65,7 @@ export function prepareHome(o: HomeOptions = {}): string {
+@@ -67,7 +67,7 @@ export function prepareHome(o: HomeOptions = {}): string {
  
    // A home that exists is checked before a single byte goes into it.
    const layoutPath = join(want, 'layout');
 -  if (existsSync(want)) {
 +  if (existsSync(want) && want === '') {
-     const layout = readLayout(layoutPath);
-     const entries = readdirSync(want).filter((n) => !isLeftover(n));
-     if (layout === null && entries.length > 0) {
-@@ -107,12 +107,12 @@ export function prepareHome(o: HomeOptions = {}): string {
+     // One listing decides. layout is created before anything else in a home and is never removed, so a
+     // listing that shows anything also shows layout, if this version made it. Reading layout first and
+     // listing second would let a start that published in between look like a stranger's home.
+@@ -113,12 +113,12 @@ export function prepareHome(o: HomeOptions = {}): string {
      }
      rmSync(tmp, { force: true });
    }
