@@ -68,8 +68,11 @@ export function prepareHome(o: HomeOptions = {}): string {
   // A home that exists is checked before a single byte goes into it.
   const layoutPath = join(want, 'layout');
   if (existsSync(want)) {
-    const layout = readLayout(layoutPath);
+    // One listing decides. layout is created before anything else in a home and is never removed, so a
+    // listing that shows anything also shows layout, if this version made it. Reading layout first and
+    // listing second would let a start that published in between look like a stranger's home.
     const entries = readdirSync(want).filter((n) => !isLeftover(n));
+    const layout = entries.includes('layout') ? readLayout(layoutPath) : null;
     if (layout === null && entries.length > 0) {
       throw new HomeRefused(
         `${want} was made by another ecp version, or by something else: set ECP_HOME to a new directory`,

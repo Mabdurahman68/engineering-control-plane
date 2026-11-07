@@ -117,3 +117,25 @@ describe('test 17, the link race forced', () => {
     ).toThrow(HomeRefused);
   });
 });
+
+describe('test 17, a start that looks while another publishes', () => {
+  it('a home holding a published layout and runs/, and nothing else, is this version’s', () => {
+    const home = tempDir('ecp-h-');
+    writeFileSync(join(home, 'layout'), 'ecp-home v2');
+    mkdirSync(join(home, 'runs'));
+    writeFileSync(join(home, 'layout.tmp-9-abc'), 'ecp-home v2');
+    expect(() => prepareHome({ home })).not.toThrow();
+    expect(listing(home)).toEqual(['layout', 'runs']);
+  });
+  it('many starts on one fresh home, round after round: no start refuses', async () => {
+    for (let round = 0; round < 10; round++) {
+      const home = join(tempDir('ecp-h-'), 'home');
+      const hs = Array.from({ length: 6 }, () => holder(home));
+      await Promise.all(hs.map((h) => h.ready));
+      const answers = await Promise.all(hs.map((h) => h.ask('acquire')));
+      expect(answers.filter((a) => a.error)).toEqual([]);
+      expect(answers.filter((a) => a.ok)).toHaveLength(1);
+      for (const h of hs) h.child.kill('SIGKILL');
+    }
+  }, 120_000);
+});
